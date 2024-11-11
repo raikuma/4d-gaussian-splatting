@@ -23,7 +23,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr, easy_cmap
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 import numpy as np
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
@@ -299,6 +299,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
     psnr_test_iter = 0.0
     # Report test and samples of training set
     if iteration in testing_iterations:
+        save_folder = os.path.join(scene.model_path, f"test_{iteration}_renders")
+        os.makedirs(save_folder, exist_ok=True)
+
         validation_configs = ({'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]},
                               {'name': 'test', 'cameras' : [scene.getTestCameras()[idx] for idx in range(len(scene.getTestCameras()))]})
 
@@ -327,6 +330,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     psnr_test += psnr(image, gt_image).mean().double()
                     ssim_test += ssim(image, gt_image).mean().double()
                     msssim_test += msssim(image[None].cpu(), gt_image[None].cpu())
+
+                    save_image(image, os.path.join(save_folder, f'{idx:04d}.png'))
+
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras']) 
                 ssim_test /= len(config['cameras'])     
