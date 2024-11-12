@@ -96,5 +96,5 @@ class Scene:
     def getTrainCameras(self, scale=1.0):
         return CameraDataset(self.train_cameras[scale].copy(), self.white_background)
         
-    def getTestCameras(self, scale=1.0):
-        return CameraDataset(self.test_cameras[scale].copy(), self.white_background)
+    def getTestCameras(self, scale=1.0, view_only=False):
+        return CameraDataset(self.test_cameras[scale].copy(), self.white_background, view_only=view_only)
