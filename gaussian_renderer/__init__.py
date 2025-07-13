@@ -87,6 +87,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             ts = pc.get_t
             if pc.rot_4d:
                 rotations_r = pc.get_rotation_r
+        marginal_t = None
+        sigma = None
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
