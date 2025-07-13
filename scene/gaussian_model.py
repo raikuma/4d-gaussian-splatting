@@ -234,7 +234,7 @@ class GaussianModel:
 
     def get_marginal_t(self, timestamp, scaling_modifier = 1): # Standard
         sigma = self.get_cov_t(scaling_modifier)
-        return torch.exp(-0.5*(self.get_t-timestamp)**2/sigma) # / torch.sqrt(2*torch.pi*sigma)
+        return torch.exp(-0.5*(self.get_t-timestamp)**2/sigma), sigma # / torch.sqrt(2*torch.pi*sigma)
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -577,8 +577,13 @@ class GaussianModel:
         if self.gaussian_dim == 4:
             self.t_gradient_accum[update_filter] += avg_t_grad[update_filter]
         
-    def add_densification_stats_grad(self, viewspace_point_grad, update_filter, avg_t_grad=None):
-        self.xyz_gradient_accum[update_filter] += viewspace_point_grad[update_filter]
-        self.denom[update_filter] += 1
+    def add_densification_stats_grad(self, viewspace_point_grad, update_filter, avg_t_grad=None, da_densification=False, opacity_t=None, sigma=None):
+        if da_densification:
+            weight = opacity_t[update_filter] * (1/sigma[update_filter])
+        else:
+            weight = 1.0
+
+        self.xyz_gradient_accum[update_filter] += viewspace_point_grad[update_filter] * weight
+        self.denom[update_filter] += 1 * weight
         if self.gaussian_dim == 4:
             self.t_gradient_accum[update_filter] += avg_t_grad[update_filter]

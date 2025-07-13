@@ -75,6 +75,7 @@ class PipelineParams(ParamGroup):
         self.env_optimize_until = 1000000000
         self.env_optimize_from = 0
         self.eval_shfs_4d = False
+        self.da_densification = False
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):

@@ -109,6 +109,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 depth = render_pkg["depth"]
                 alpha = render_pkg["alpha"]
+                opacity_t = render_pkg["opacity_t"]
+                sigma = render_pkg["sigma"]
 
                 # Loss
                 Ll1 = l1_loss(image, gt_image)
@@ -233,7 +235,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     if batch_size == 1:
                         gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None)
                     else:
-                        gaussians.add_densification_stats_grad(batch_viewspace_point_grad, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None)
+                        gaussians.add_densification_stats_grad(batch_viewspace_point_grad, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None,
+                                                               da_densification=pipe.da_densification, opacity_t=opacity_t, sigma=sigma)
                         
                     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                         size_threshold = 20 if iteration > opt.opacity_reset_interval else None

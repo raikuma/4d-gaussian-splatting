@@ -76,7 +76,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         else:
             cov3D_precomp = pc.get_covariance(scaling_modifier)
         if pc.gaussian_dim == 4:
-            marginal_t = pc.get_marginal_t(viewpoint_camera.timestamp)
+            marginal_t, sigma = pc.get_marginal_t(viewpoint_camera.timestamp)
             # marginal_t = torch.clamp_max(marginal_t, 1.0) # NOTE: 这里乘完会大于1，绝对不行——marginal_t应该用个概率而非概率密度 暂时可以clamp一下，后期用积分 —— 2d 也用的clamp
             opacity = opacity * marginal_t
     else:
@@ -117,7 +117,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     flow_2d = torch.zeros_like(pc.get_xyz[:,:2])
     
     # Prefilter
-    if pipe.compute_cov3D_python and pc.gaussian_dim == 4:
+    if pipe.compute_cov3D_python and pc.gaussian_dim == 4 and not pipe.da_densification:
         mask = marginal_t[:,0] > 0.05
         if means2D is not None:
             means2D = means2D[mask]
@@ -174,7 +174,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         # mask2 = (0 < xyz_inter[...,0]) & (xyz_inter[...,1] > 0) # & (xyz_inter[...,2] > -19)
         rendered_image = rendered_image + (1 - alpha) * bg_color_from_envmap # * mask2[None]
     
-    if pipe.compute_cov3D_python and pc.gaussian_dim == 4:
+    if pipe.compute_cov3D_python and pc.gaussian_dim == 4 and not pipe.da_densification:
         radii_all = radii.new_zeros(mask.shape)
         radii_all[mask] = radii
     else:
@@ -188,4 +188,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "radii": radii_all,
             "depth": depth,
             "alpha": alpha,
-            "flow": flow}
+            "flow": flow,
+            "opacity_t": marginal_t,
+            "sigma": sigma}

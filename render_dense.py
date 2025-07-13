@@ -24,13 +24,13 @@ import time
 import numpy as np
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-    depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_dense")
+    # gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    # depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
 
     makedirs(render_path, exist_ok=True)
-    makedirs(gts_path, exist_ok=True)
-    makedirs(depth_path, exist_ok=True)
+    # makedirs(gts_path, exist_ok=True)
+    # makedirs(depth_path, exist_ok=True)
 
     t_list = []
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
@@ -60,7 +60,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(view_only=True), gaussians, pipeline, background)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
 
 if __name__ == "__main__":
     # Set up command line argument parser
