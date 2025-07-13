@@ -9,8 +9,8 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "data/N3V/flame_salmon"
-  model_path: "output/N3V_da/flame_salmon"
+  source_path: "data/N3V/flame_salmon_1"
+  model_path: "output/N3V_da/flame_salmon_1"
   images: "images"
   resolution: 2
   white_background: False
