@@ -10,7 +10,7 @@ exhaust_test: True
 ModelParams:
   sh_degree: 3
   source_path: "data/N3V/sear_steak"
-  model_path: "output/N3V/sear_steak"
+  model_path: "output/N3V_less/sear_steak"
   images: "images"
   resolution: 2
   white_background: False
