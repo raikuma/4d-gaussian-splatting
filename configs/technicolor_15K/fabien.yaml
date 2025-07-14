@@ -9,8 +9,8 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "data/technicolor_50/Birthday"
-  model_path: "output/technicolor_50/Birthday"
+  source_path: "data/technicolor_50/Fabien"
+  model_path: "output/technicolor_50_15K/Fabien"
   images: "images"
   resolution: 1
   white_background: False
