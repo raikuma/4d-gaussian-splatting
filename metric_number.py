@@ -38,23 +38,27 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         rendering = render(view[1].cuda(), gaussians, pipeline, background)["render"]
         torch.cuda.synchronize(); t1 = time.time()
         t_list.append(t1 - t0)
-        # gt = view[0][0:3, :, :]
+        gt = view[0][0:3, :, :]
         # depth = render(view[1].cuda(), gaussians, pipeline, background)["depth"]
         # depth /= depth.max()
-        # torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        # torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         # torchvision.utils.save_image(depth, os.path.join(depth_path, '{0:05d}'.format(idx) + ".png"))
     t = np.array(t_list[5:])
     fps = 1.0 / t.mean()
-    # print(f'Test FPS: \033[1;35m{fps:.5f}\033[0m')
-    with open(os.path.join(model_path, "fps.txt"), 'w') as f:
-        f.write(f"FPS: {fps:.5f}\n")
-        print(f"FPS: {fps:.5f}")
+    print(f'Test FPS: \033[1;35m{fps:.5f}\033[0m')
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree, gaussian_dim=4, rot_4d=True)
         scene = Scene(dataset, gaussians, shuffle=False)
+
+        total = gaussians.get_xyz().shape[0]
+        dyn = ((1 / gaussians.get_cov_t) > 0.4).sum().itme()
+        with open(os.path.join(dataset.model_path, "number.txt"), 'w') as f:
+             f.write(f"Anchor: {0}\nTotal: {total}\nActive: {0}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}")
+             print(f"Anchor: {0}, Total: {total}, Active: {0}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}")
+        exit(0)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -63,7 +67,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(view_only=True), gaussians, pipeline, background)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
 
 if __name__ == "__main__":
     # Set up command line argument parser

@@ -20,4 +20,3 @@ dist/
 eggs/
 .eggs/
 *.egg
-*.sh
