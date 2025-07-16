@@ -5,7 +5,7 @@ if __name__ == "__main__":
     model_path = sys.argv[1]
     iteration = sys.argv[2]
 
-    file_path = os.path.join(model_path, "point_cloud", f"iteration_{iteration}", "point_cloud.ply")
+    file_path = os.path.join(model_path, f"chkpnt{iteration}.pth")
     if not os.path.exists(file_path):
         print(f"File {file_path} does not exist.")
         sys.exit(1)
