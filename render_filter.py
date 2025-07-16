@@ -24,13 +24,13 @@ import time
 import numpy as np
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_dense")
-    # gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-    # depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_filter")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
 
     makedirs(render_path, exist_ok=True)
-    # makedirs(gts_path, exist_ok=True)
-    # makedirs(depth_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+    makedirs(depth_path, exist_ok=True)
 
     t_list = []
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
@@ -38,7 +38,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         rendering = render(view[1].cuda(), gaussians, pipeline, background)["render"]
         torch.cuda.synchronize(); t1 = time.time()
         t_list.append(t1 - t0)
-        # gt = view[0][0:3, :, :]
+        gt = view[0][0:3, :, :]
         # depth = render(view[1].cuda(), gaussians, pipeline, background)["depth"]
         # depth /= depth.max()
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
@@ -55,6 +55,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+        pipeline.env_map_res = gaussians.env_map.shape[-1]
 
         if not skip_train:
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
