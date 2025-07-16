@@ -54,7 +54,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         scene = Scene(dataset, gaussians, shuffle=False)
 
         total = gaussians.get_xyz.shape[0]
-        dyn = ((1 / gaussians.get_cov_t()) > 0.4).sum().item()
+        dyn = ((1 / gaussians.get_cov_t()) < 0.4).sum().item()
         with open(os.path.join(dataset.model_path, "number.txt"), 'w') as f:
              f.write(f"Anchor: {0}\nTotal: {total}\nActive: {0}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}")
              print(f"Anchor: {0}, Total: {total}, Active: {0}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}")
