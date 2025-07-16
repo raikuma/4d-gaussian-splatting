@@ -12,10 +12,10 @@ if __name__ == "__main__":
     try:
         with open(f"{model_path}/results.json", 'r') as f:
             metrics = json.load(f)
-            values = metrics['ours_'+iteration]
+            values = metrics['ours_None']
             results['full-psnr'] = values['PSNR']
             results['full-ssim'] = values['SSIM']
-            results['full-alex'] = values['ALEX']
+            results['full-alex'] = values['LPIPS_ALEX']
     except:
         pass
         
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     try:
         with open(f"{model_path}/results_mask.json", 'r') as f:
             metrics = json.load(f)
-            values = metrics['ours_'+iteration]
+            values = metrics['ours_None']
             results['mask-psnr'] = values['PSNR']
             results['mask-ssim'] = values['SSIM']
             results['mask-alex'] = values['ALEX']
