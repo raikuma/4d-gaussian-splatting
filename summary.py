@@ -15,7 +15,7 @@ if __name__ == "__main__":
             values = metrics['ours_None']
             results['full-psnr'] = values['PSNR']
             results['full-ssim'] = values['SSIM']
-            results['full-alex'] = values['LPIPS_ALEX']
+            results['full-alex'] = values['ALEX']
     except:
         pass
         
