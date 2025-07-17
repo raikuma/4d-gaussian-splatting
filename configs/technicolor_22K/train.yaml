@@ -10,7 +10,7 @@ exhaust_test: False
 ModelParams:
   sh_degree: 3
   source_path: "data/technicolor_50/Train"
-  model_path: "output/technicolor_50_15K/Train"
+  model_path: "output/technicolor_50_22K/Train"
   images: "images"
   resolution: 1
   white_background: False
