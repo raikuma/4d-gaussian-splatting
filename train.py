@@ -396,11 +396,11 @@ if __name__ == "__main__":
             setattr(args, key, host[key])
     for k in cfg.keys():
         recursive_merge(k, cfg)
+
+    args.save_iterations.append(args.iterations)
         
     if args.exhaust_test:
         args.test_iterations = args.test_iterations + [i for i in range(0,op.iterations,500)]
-
-    args.save_iterations.append(op.iterations)
     
     setup_seed(args.seed)
     
