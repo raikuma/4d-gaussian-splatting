@@ -368,8 +368,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 15_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 15_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     
@@ -385,7 +385,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=0)
     
     args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
         
     cfg = OmegaConf.load(args.config)
     def recursive_merge(key, host):
@@ -400,6 +399,8 @@ if __name__ == "__main__":
         
     if args.exhaust_test:
         args.test_iterations = args.test_iterations + [i for i in range(0,op.iterations,500)]
+
+    args.save_iterations.append(op.iterations)
     
     setup_seed(args.seed)
     
