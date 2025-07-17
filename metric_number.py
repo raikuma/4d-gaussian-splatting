@@ -56,8 +56,8 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         total = gaussians.get_xyz.shape[0]
         dyn = ((1 / gaussians.get_cov_t()) < 0.4).sum().item()
         with open(os.path.join(dataset.model_path, "number.txt"), 'w') as f:
-             f.write(f"Anchor: {0}\nTotal: {total}\nActive: {0}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}")
-             print(f"Anchor: {0}, Total: {total}, Active: {0}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}")
+             f.write(f"Anchor: {0}\nTotal: {total}\nActive: {total}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}")
+             print(f"Anchor: {0}, Total: {total}, Active: {total}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}")
         exit(0)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
