@@ -57,8 +57,8 @@ class Scene:
             print("Using provided PLY file: {}".format(ply_path))
             pcd = fetchPly(ply_path)
             scene_info = SceneInfo(point_cloud=pcd,
-                           train_cameras=scene_info.train_cam_infos,
-                           test_cameras=scene_info.test_cam_infos,
+                           train_cameras=scene_info.train_cameras,
+                           test_cameras=scene_info.test_cameras,
                            nerf_normalization=scene_info.nerf_normalization,
                            ply_path=ply_path)
 
