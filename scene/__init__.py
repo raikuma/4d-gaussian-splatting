@@ -14,7 +14,7 @@ import torch
 import random
 import json
 from utils.system_utils import searchForMaxIteration
-from scene.dataset_readers import sceneLoadTypeCallbacks, fetchPly
+from scene.dataset_readers import sceneLoadTypeCallbacks, fetchPly, SceneInfo
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
@@ -54,9 +54,13 @@ class Scene:
             assert False, "Could not recognize scene type!"
 
         if ply_path is not None:
-            scene_info.ply_path = ply_path
             print("Using provided PLY file: {}".format(ply_path))
-            scene_info.point_cloud = fetchPly(ply_path)
+            pcd = fetchPly(ply_path)
+            scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=scene_info.train_cam_infos,
+                           test_cameras=scene_info.test_cam_infos,
+                           nerf_normalization=scene_info.nerf_normalization,
+                           ply_path=ply_path)
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
