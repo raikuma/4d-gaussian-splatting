@@ -94,3 +94,10 @@ python train.py --config configs/dynerf/flame_salmon.yaml --num_workers 6 --ply_
 python train.py --config configs/dynerf/flame_steak.yaml --num_workers 6 --ply_path data/N3V/flame_steak/colmap_0/sparse/0/points3D.ply &&
 python train.py --config configs/dynerf/sear_steak.yaml --num_workers 6 --ply_path data/N3V/sear_steak/colmap_0/sparse/0/points3D.ply
 
+
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh bike1 &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh bike2 &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh corgi1 &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh corgi2 &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh dance1 &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh dance2
