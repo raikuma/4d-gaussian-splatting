@@ -9,8 +9,8 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "data/SelfCap/bike1"
-  model_path: "output/SelfCap/bike1"
+  source_path: "data/SelfCap/corgi2"
+  model_path: "output/SelfCap/corgi2"
   images: "images"
   resolution: 2
   white_background: False

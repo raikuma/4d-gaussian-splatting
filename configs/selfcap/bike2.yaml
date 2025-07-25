@@ -9,8 +9,8 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "data/SelfCap/bike1"
-  model_path: "output/SelfCap/bike1"
+  source_path: "data/SelfCap/bike2"
+  model_path: "output/SelfCap/bike2"
   images: "images"
   resolution: 1
   white_background: False

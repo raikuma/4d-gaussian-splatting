@@ -95,9 +95,9 @@ python train.py --config configs/dynerf/flame_steak.yaml --num_workers 6 --ply_p
 python train.py --config configs/dynerf/sear_steak.yaml --num_workers 6 --ply_path data/N3V/sear_steak/colmap_0/sparse/0/points3D.ply
 
 
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh bike1 &&
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh bike2 &&
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh corgi1 &&
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh corgi2 &&
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh dance1 &&
-sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh dance2
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/bike1.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/bike2.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/corgi1.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/corgi2.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/dance1.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/dance2.yaml
