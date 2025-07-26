@@ -49,7 +49,16 @@ class Scene:
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, num_pts=num_pts, time_duration=time_duration, extension=args.extension, num_extra_pts=args.num_extra_pts, frame_ratio=args.frame_ratio, dataloader=args.dataloader)
         elif os.path.exists(os.path.join(args.source_path, "colmap")):
-            scene_info = sceneLoadTypeCallbacks["Technicolor"](args, args.source_path, None, args.eval, duration=50)
+            if 'SelfCap' in args.source_path:
+                duration = 60
+            elif 'technicolor_300' in args.source_path:
+                if 'Fabien' in args.source_path:
+                    duration = 200
+                else:
+                    duration = 300
+            else: # technicolor
+                duration = 50
+            scene_info = sceneLoadTypeCallbacks["Technicolor"](args, args.source_path, None, args.eval, duration=duration)
         else:
             assert False, "Could not recognize scene type!"
 
