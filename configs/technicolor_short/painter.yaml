@@ -10,7 +10,7 @@ exhaust_test: False
 ModelParams:
   sh_degree: 3
   source_path: "data/technicolor_50/Painter"
-  model_path: "output/technicolor_50_22K/Painter"
+  model_path: "output/technicolor_50_short/Painter"
   images: "images"
   resolution: 1
   white_background: False

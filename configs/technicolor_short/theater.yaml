@@ -10,7 +10,7 @@ exhaust_test: False
 ModelParams:
   sh_degree: 3
   source_path: "data/technicolor_50/Theater"
-  model_path: "output/technicolor_50_22K/Theater"
+  model_path: "output/technicolor_50_short/Theater"
   images: "images"
   resolution: 1
   white_background: False
