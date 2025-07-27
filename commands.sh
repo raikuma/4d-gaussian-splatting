@@ -107,3 +107,9 @@ sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/fabien.
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/painter.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/theater.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/train.yaml
+
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/birthday.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/fabien.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/painter.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/theater.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/train.yaml
