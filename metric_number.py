@@ -55,9 +55,21 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         total = gaussians.get_xyz.shape[0]
         dyn = ((1 / gaussians.get_cov_t()) < 0.4).sum().item()
+
+        test_cameras = scene.getTestCameras()
+        timestamp_0 = test_cameras[0][1].timestamp
+        timestamp_1 = test_cameras[-1][1].timestamp
+        marginal_t_0 = gaussians.get_marginal_t(timestamp_0)[0]
+        marginal_t_1 = gaussians.get_marginal_t(timestamp_1)[0]
+        mask_0 = marginal_t_0 > 0.5
+        mask_1 = marginal_t_1 > 0.5
+        mask_static = mask_0 & mask_1
+        n_static = mask_static.sum().item()
+        n_dynamic = mask_static.shape[0] - n_static
+
         with open(os.path.join(dataset.model_path, "number.txt"), 'w') as f:
-             f.write(f"Anchor: {0}\nTotal: {total}\nActive: {total}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}")
-             print(f"Anchor: {0}, Total: {total}, Active: {total}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}")
+             f.write(f"Anchor: {0}\nTotal: {total}\nActive: {total}\nRatio: {0}\nStatic: {total - dyn}\nDynamic: {dyn}\nStatic2: {n_static}\nDynamic2: {n_dynamic}\n")
+             print(f"Anchor: {0}, Total: {total}, Active: {total}, Ratio: {0}, Static: {total - dyn}, Dynamic: {dyn}, Static2: {n_static}, Dynamic2: {n_dynamic}")
         exit(0)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]

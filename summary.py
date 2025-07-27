@@ -60,5 +60,5 @@ if __name__ == "__main__":
     print(f"full-PSNR	full-SSIM	full-ALEX	mask-PSNR	mask-SSIM	mask-ALEX	anchor	total	active	static	dynamic	storage	fps")
     print(f"{results['full-psnr']}	{results['full-ssim']}	{results['full-alex']}	"
           f"{results['mask-psnr']}	{results['mask-ssim']}	{results['mask-alex']}	"
-          f"{results['anchor']}	{results['total']}	{results['active']}	{results['static']}	{results['dynamic']}	"
+          f"{results['anchor']}	{results['total']}	{results['active']}	{results['static']}	{results['dynamic']}	{results['static2']}	{results['dynamic2']}	"
           f"{results['storage']}	{results['fps']}")

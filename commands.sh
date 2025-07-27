@@ -27,16 +27,16 @@ CUDA_VISIBLE_DEVICES=2 sh metric_all.sh output/technicolor_50_15K/Train data/tec
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/coffee_martini_wo_cam13/ -s /mnt/d/data/N3DV/coffee_martini/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/coffee_martini_wo_cam13/chkpnt_best.pth ;
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/cook_spinach/ -s /mnt/d/data/N3DV/cook_spinach/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/cook_spinach/chkpnt_best.pth ;
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/cut_roasted_beef/ -s /mnt/d/data/N3DV/cut_roasted_beef/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/cut_roasted_beef/chkpnt_best.pth ;
-python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/flame_salmon_0/ -s /mnt/d/data/N3DV/flame_salmon_1/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/flame_salmon_0/chkpnt_best.pth ;
+python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/flame_salmon_0/ -s /mnt/d/data/N3DV/flame_salmon_1/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/bin/flame_salmon_0/chkpnt_best.pth
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/ -s /mnt/d/data/N3DV/flame_steak/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/chkpnt_best.pth ;
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/ -s /mnt/d/data/N3DV/sear_steak/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/chkpnt_best.pth ;
 
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/coffee_martini_wo_cam13/ data/N3DV/coffee_martini/combined_motion_masks None ;
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cook_spinach/ data/N3DV/cook_spinach/combined_motion_masks None ;
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cut_roasted_beef/ data/N3DV/cut_roasted_beef/combined_motion_masks None ;
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/bin/flame_salmon_0/ data/N3DV/flame_salmon_1/combined_motion_masks None ;
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/ data/N3DV/flame_steak/combined_motion_masks None ;
-sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/ data/N3DV/sear_steak/combined_motion_masks None
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/coffee_martini_wo_cam13/ data/N3DV/coffee_martini/combined_motion_masks 30000 &&
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cook_spinach/ data/N3DV/cook_spinach/combined_motion_masks 30000 &&
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cut_roasted_beef/ data/N3DV/cut_roasted_beef/combined_motion_masks 30000 &&
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/bin/flame_salmon_0/ data/N3DV/flame_salmon_1/combined_motion_masks 30000 &&
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/ data/N3DV/flame_steak/combined_motion_masks 30000 &&
+sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/ data/N3DV/sear_steak/combined_motion_masks 30000
 
 CUDA_VISIBLE_DEVICES=0 sh metric_all.sh output/N3V/coffee_martini/ data/N3V/coffee_martini/combined_motion_masks/ 30000 ;
 CUDA_VISIBLE_DEVICES=0 sh metric_all.sh output/N3V/cook_spinach/ data/N3V/cook_spinach/combined_motion_masks/ 30000 ;
@@ -101,3 +101,9 @@ sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/corgi1.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/corgi2.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/dance1.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh selfcap/dance2.yaml
+
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/birthday.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/fabien.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/painter.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/theater.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_300/train.yaml
