@@ -58,6 +58,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         if gaussians.env_map is not None:
             pipeline.env_map_res = gaussians.env_map.shape[-1]
+        pipeline.eval_shfs_4d = True
 
         # if not skip_train:
         #      render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
