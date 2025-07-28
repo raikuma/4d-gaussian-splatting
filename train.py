@@ -204,7 +204,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     postfix = {"Loss": f"{ema_loss_for_log:.{7}f}",
                                             "PSNR": f"{psnr_for_log:.{2}f}",
                                             "Ll1": f"{ema_l1loss_for_log:.{4}f}",
-                                            "Lssim": f"{ema_ssimloss_for_log:.{4}f}",}
+                                            "Lssim": f"{ema_ssimloss_for_log:.{4}f}",
+                                            "#": f"{gaussians.get_xyz.shape[0]}",}
                     
                     for lambda_name in lambda_all:
                         if opt.__dict__[lambda_name] > 0:
