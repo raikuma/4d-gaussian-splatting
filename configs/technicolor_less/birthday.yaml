@@ -9,10 +9,10 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "data/N3V/flame_salmon_1"
-  model_path: "output/N3V_less/flame_salmon_1"
+  source_path: "data/technicolor_50/Birthday"
+  model_path: "output/technicolor_50/Birthday"
   images: "images"
-  resolution: 2
+  resolution: 1
   white_background: False
   data_device: "cuda"
   eval: True
@@ -26,8 +26,8 @@ PipelineParams:
   convert_SHs_python: False
   compute_cov3D_python: False
   debug: False
-  env_map_res: 500
-  env_optimize_until: 5000
+  env_map_res: 0
+  env_optimize_until: 1000000000
   env_optimize_from: 0
   eval_shfs_4d: True
 

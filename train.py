@@ -335,7 +335,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     ssim_test += ssim(image, gt_image).mean().double()
                     msssim_test += msssim(image[None].cpu(), gt_image[None].cpu())
 
-                    save_image(image, os.path.join(save_folder, f'{idx:04d}.png'))
+                    # save_image(image, os.path.join(save_folder, f'{idx:04d}.png'))
+                    save_image(image, os.path.join(save_folder, viewpoint.image_name.split('/')[-1]))
 
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras']) 

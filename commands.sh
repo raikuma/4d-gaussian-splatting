@@ -31,6 +31,12 @@ python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/flame_salmon_0/ -s 
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/ -s /mnt/d/data/N3DV/flame_steak/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/flame_steak/chkpnt_best.pth ;
 python metric_number.py -m /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/ -s /mnt/d/data/N3DV/sear_steak/ --loaded_pth /mnt/d/files/iclr_4dgs_dynerf_log/sear_steak/chkpnt_best.pth ;
 
+python metric_number.py -m /mnt/d/results/4dgs_technicolor/Birthday/ -s /mnt/d/data/technicolor_50/Birthday/ --loaded_pth /mnt/d/results/4dgs_technicolor/Birthday/chkpnt_best.pth ;
+python metric_number.py -m /mnt/d/results/4dgs_technicolor/Fabien/ -s /mnt/d/data/technicolor_50/Fabien/ --loaded_pth /mnt/d/results/4dgs_technicolor/Fabien/chkpnt_best.pth ;
+python metric_number.py -m /mnt/d/results/4dgs_technicolor/Painter/ -s /mnt/d/data/technicolor_50/Painter/ --loaded_pth /mnt/d/results/4dgs_technicolor/Painter/chkpnt_best.pth ;
+python metric_number.py -m /mnt/d/results/4dgs_technicolor/Theater/ -s /mnt/d/data/technicolor_50/Theater/ --loaded_pth /mnt/d/results/4dgs_technicolor/Theater/chkpnt_best.pth ;
+python metric_number.py -m /mnt/d/results/4dgs_technicolor/Train/ -s /mnt/d/data/technicolor_50/Train/ --loaded_pth /mnt/d/results/4dgs_technicolor/Train/chkpnt_best.pth ;
+
 sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/coffee_martini_wo_cam13/ data/N3DV/coffee_martini/combined_motion_masks 30000 &&
 sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cook_spinach/ data/N3DV/cook_spinach/combined_motion_masks 30000 &&
 sh metric_all.sh /mnt/d/files/iclr_4dgs_dynerf_log/cut_roasted_beef/ data/N3DV/cut_roasted_beef/combined_motion_masks 30000 &&
@@ -64,12 +70,6 @@ sh metric_all.sh /mnt/d/results/4dgs_technicolor/Fabien/ data/technicolor_15K/Fa
 sh metric_all.sh /mnt/d/results/4dgs_technicolor/Painter/ data/technicolor_15K/Painter/combined_motion_masks 30000 ;
 sh metric_all.sh /mnt/d/results/4dgs_technicolor/Theater/ data/technicolor_15K/Theater/combined_motion_masks 30000 ;
 sh metric_all.sh /mnt/d/results/4dgs_technicolor/Train/ data/technicolor_15K/Train/combined_motion_masks 30000
-
-python metric_number.py -m /mnt/d/results/4dgs_technicolor/Birthday/ -s /mnt/d/data/technicolor_50/Birthday/ --loaded_pth /mnt/d/results/4dgs_technicolor/Birthday/chkpnt_best.pth ;
-python metric_number.py -m /mnt/d/results/4dgs_technicolor/Fabien/ -s /mnt/d/data/technicolor_50/Fabien/ --loaded_pth /mnt/d/results/4dgs_technicolor/Fabien/chkpnt_best.pth ;
-python metric_number.py -m /mnt/d/results/4dgs_technicolor/Painter/ -s /mnt/d/data/technicolor_50/Painter/ --loaded_pth /mnt/d/results/4dgs_technicolor/Painter/chkpnt_best.pth ;
-python metric_number.py -m /mnt/d/results/4dgs_technicolor/Theater/ -s /mnt/d/data/technicolor_50/Theater/ --loaded_pth /mnt/d/results/4dgs_technicolor/Theater/chkpnt_best.pth ;
-python metric_number.py -m /mnt/d/results/4dgs_technicolor/Train/ -s /mnt/d/data/technicolor_50/Train/ --loaded_pth /mnt/d/results/4dgs_technicolor/Train/chkpnt_best.pth ;
 
 python metric_number.py -m output/technicolor_50_15K/Fabien/ --skip_train --loaded_pth output/technicolor_50_15K/Fabien/chkpnt15000.pth
 python metric_number.py -m output/technicolor_50_15K/Painter/ --skip_train --loaded_pth output/technicolor_50_15K/Painter/chkpnt15000.pth
@@ -113,3 +113,39 @@ sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/fabie
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/painter.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/theater.yaml &&
 sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_short/train.yaml
+
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_2/birthday.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_2/fabien.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_2/painter.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_2/theater.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor_2/train.yaml
+
+sbatch --exclude=node36 --partition=suma_a6000 --gres=gpu:1 train_4dgs_ply.sh technicolor/birthday.yaml data/technicolor_50/Birthday/colmap/dense/workspace/fused.ply &&
+sbatch --exclude=node36 --partition=suma_a6000 --gres=gpu:1 train_4dgs_ply.sh technicolor/fabien.yaml data/technicolor_50/Fabien/colmap/dense/workspace/fused.ply &&
+sbatch --exclude=node36 --partition=suma_a6000 --gres=gpu:1 train_4dgs_ply.sh technicolor/painter.yaml data/technicolor_50/Painter/colmap/dense/workspace/fused.ply &&
+sbatch --exclude=node36 --partition=suma_a6000 --gres=gpu:1 train_4dgs_ply.sh technicolor/theater.yaml data/technicolor_50/Theater/colmap/dense/workspace/fused.ply &&
+sbatch --exclude=node36 --partition=suma_a6000 --gres=gpu:1 train_4dgs_ply.sh technicolor/train.yaml data/technicolor_50/Train/colmap/dense/workspace/fused.ply
+
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor/birthday.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor/fabien.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor/painter.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor/theater.yaml &&
+sbatch --partition=suma_a6000 --gres=gpu:1 train_4dgs.sh technicolor/train.yaml
+
+CUDA_VISIBLE_DEVICES=0 python train.py --config configs/technicolor/birthday.yaml --num_workers 6 &&
+CUDA_VISIBLE_DEVICES=1 python train.py --config configs/technicolor/fabien.yaml --num_workers 6 &&
+CUDA_VISIBLE_DEVICES=1 python train.py --config configs/technicolor/painter.yaml --num_workers 6 &&
+CUDA_VISIBLE_DEVICES=2 python train.py --config configs/technicolor/theater.yaml --num_workers 6 &&
+CUDA_VISIBLE_DEVICES=3 python train.py --config configs/technicolor/train.yaml --num_workers 6
+
+sh metric_all.sh output/technicolor_50/Birthday/ data/technicolor_50/Birthday/combined_motion_masks 30000 &&
+sh metric_all.sh output/technicolor_50/Fabien/ data/technicolor_50/Fabien/combined_motion_masks 30000 &&
+sh metric_all.sh output/technicolor_50/Painter/ data/technicolor_50/Painter/combined_motion_masks 30000 &&
+sh metric_all.sh output/technicolor_50/Theater/ data/technicolor_50/Theater/combined_motion_masks 30000 &&
+sh metric_all.sh output/technicolor_50/Train/ data/technicolor_50/Train/combined_motion_masks 30000
+
+sh metric_all.sh /mnt/d/results/4dgs_technicolor_2/Birthday/ /mnt/c/Users/ciplab/workspace/Neural-Scene-Flow-Fields/data/Birthday/combined_motion_masks/ 30000 &&
+sh metric_all.sh /mnt/d/results/4dgs_technicolor_2/Fabien/ /mnt/c/Users/ciplab/workspace/Neural-Scene-Flow-Fields/data/Fabien/combined_motion_masks/ 30000 &&
+sh metric_all.sh /mnt/d/results/4dgs_technicolor_2/Painter/ /mnt/c/Users/ciplab/workspace/Neural-Scene-Flow-Fields/data/Painter/combined_motion_masks/ 30000 &&
+sh metric_all.sh /mnt/d/results/4dgs_technicolor_2/Theater/ /mnt/c/Users/ciplab/workspace/Neural-Scene-Flow-Fields/data/Theater/combined_motion_masks/ 30000 &&
+sh metric_all.sh /mnt/d/results/4dgs_technicolor_2/Train/ /mnt/c/Users/ciplab/workspace/Neural-Scene-Flow-Fields/data/Train/combined_motion_masks/ 30000
