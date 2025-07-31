@@ -302,12 +302,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
     psnr_test_iter = 0.0
     # Report test and samples of training set
-    if iteration in testing_iterations:
+    if True or iteration in testing_iterations:
         save_folder = os.path.join(scene.model_path, f"test_{iteration}_renders")
         os.makedirs(save_folder, exist_ok=True)
 
-        validation_configs = ({'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]},
-                              {'name': 'test', 'cameras' : [scene.getTestCameras()[idx] for idx in range(len(scene.getTestCameras()))]})
+        validation_configs = (
+            # {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]},
+            {'name': 'test', 'cameras' : [scene.getTestCameras()[idx] for idx in range(len(scene.getTestCameras()))]},
+        )
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -336,7 +338,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     msssim_test += msssim(image[None].cpu(), gt_image[None].cpu())
 
                     # save_image(image, os.path.join(save_folder, f'{idx:04d}.png'))
-                    save_image(image, os.path.join(save_folder, viewpoint.image_name.split('/')[-1]))
+                    save_image(image, os.path.join(save_folder, viewpoint.image_name.split('/')[-1]+'.png'))
 
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras']) 
