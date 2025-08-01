@@ -302,7 +302,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
     psnr_test_iter = 0.0
     # Report test and samples of training set
-    if True or iteration in testing_iterations:
+    if iteration in testing_iterations:
         save_folder = os.path.join(scene.model_path, f"test_{iteration}_renders")
         os.makedirs(save_folder, exist_ok=True)
 

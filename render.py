@@ -50,7 +50,12 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree, gaussian_dim=4, rot_4d=True, sh_degree_t=2)
+        pipeline.eval_shfs_4d = True
+        pipeline.convert_SHs_python = False
+        pipeline.compute_cov3D_python = False
+
+        gaussians = GaussianModel(dataset.sh_degree, gaussian_dim=4, rot_4d=True, sh_degree_t=2, force_sh_3d=False)
+
         scene = Scene(dataset, gaussians, shuffle=False)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
@@ -58,7 +63,6 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         if gaussians.env_map is not None:
             pipeline.env_map_res = gaussians.env_map.shape[-1]
-        pipeline.eval_shfs_4d = True
 
         # if not skip_train:
         #      render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
