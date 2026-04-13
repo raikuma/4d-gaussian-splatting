@@ -102,3 +102,57 @@ python train.py --config configs/dynerf/cook_spinach_debug.yaml --profile_traini
 
 - Profile logs: `output/N3DV/cook_spinach_debug_profile_20260413_nolog/profiling`
 - Backward trace table: `output/N3DV/cook_spinach_debug_profile_20260413/profiling/backward_trace/backward_cuda_table.txt`
+
+## Follow-up: averaged backward operator profile
+
+- Added `scripts/profile_backward_ops.py` to measure backward-only CUDA time from a saved checkpoint with `torch.profiler`.
+- Run command:
+
+```bash
+python scripts/profile_backward_ops.py --config configs/dynerf/cook_spinach_debug.yaml --checkpoint output/N3DV/cook_spinach_debug/chkpnt500.pth --warmup_iters 5 --profile_iters 20 --output_dir output/N3DV/cook_spinach_debug_profile_20260413_nolog/profiling/backward_ops_avg
+```
+
+### Averaged backward-only result
+
+- `avg_backward_ms`: `24.26 ms`
+- `avg_rasterizer_backward_ms`: `18.24 ms`
+- `avg_norm_backward_ms`: `0.33 ms`
+- `norm_share_of_backward`: `1.37%`
+- `rasterizer_share_of_backward`: `75.20%`
+
+### Interpretation update
+
+- The earlier single-iteration trace overestimated `normalize` as a bottleneck.
+- In averaged backward-only profiling, quaternion normalization backward is small.
+- The dominant backward bottleneck remains rasterizer backward.
+
+## Follow-up: stabilize averaged backward operator profile
+
+- Re-ran the backward-only checkpoint replay with more samples for a steadier estimate:
+
+```bash
+python scripts/profile_backward_ops.py --config configs/dynerf/cook_spinach_debug.yaml --checkpoint output/N3DV/cook_spinach_debug/chkpnt500.pth --warmup_iters 10 --profile_iters 100 --output_dir output/N3DV/cook_spinach_debug_profile_20260413_nolog/profiling/backward_ops_avg_100
+```
+
+### Stable backward-only result
+
+- `avg_backward_ms`: `24.48 ms`
+- `avg_rasterizer_backward_ms`: `18.76 ms`
+- `avg_norm_backward_ms`: `0.37 ms`
+- `norm_share_of_backward`: `1.52%`
+- `rasterizer_share_of_backward`: `76.64%`
+
+### Final correction
+
+- The single-iteration backward trace should be treated as anecdotal only.
+- The 100-step averaged backward replay is the final reference for operator attribution.
+- `normalize` is not a major bottleneck; the main optimization target remains rasterizer backward.
+
+## Visualization refresh
+
+- Added `scripts/render_profile_dashboard.py` to generate a corrected, presentation-friendly dashboard from:
+  - train section summary
+  - rasterizer summary
+  - backward operator replay summary
+- Saved artifact:
+  - `output/N3DV/cook_spinach_debug_profile_20260413_nolog/profiling/profiling_breakdown_dashboard_v2.png`
