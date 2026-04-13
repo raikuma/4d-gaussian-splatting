@@ -12,14 +12,16 @@
 #include "rasterizer_impl.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <numeric>
 #include <cstdlib>
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include <cub/cub.cuh>
-#include <cub/device/device_radix_sort.cuh>
+#include <thrust/device_ptr.h>
+#include <thrust/scan.h>
+#include <thrust/sort.h>
 #define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
 
@@ -47,6 +49,8 @@ void appendRasterizerProfileRow(
 	int points,
 	int image_width,
 	int image_height,
+	int active_tiles,
+	int total_tiles,
 	int num_rendered,
 	float preprocess_ms,
 	float scan_ms,
@@ -74,18 +78,22 @@ void appendRasterizerProfileRow(
 
 	if (write_header) {
 		stream
-			<< "phase,iteration,points,image_width,image_height,num_rendered,"
+			<< "phase,iteration,points,image_width,image_height,active_tiles,total_tiles,active_tile_ratio,num_rendered,"
 			<< "preprocess_ms,scan_ms,copy_rendered_ms,duplicate_ms,sort_ms,zero_ranges_ms,"
 			<< "identify_ranges_ms,render_ms,copy_alpha_ms,backward_render_ms,"
 			<< "backward_preprocess_ms,total_ms\n";
 	}
 
+	const float active_tile_ratio = total_tiles > 0 ? static_cast<float>(active_tiles) / static_cast<float>(total_tiles) : 1.0f;
 	stream
 		<< phase << ","
 		<< iteration << ","
 		<< points << ","
 		<< image_width << ","
 		<< image_height << ","
+		<< active_tiles << ","
+		<< total_tiles << ","
+		<< active_tile_ratio << ","
 		<< num_rendered << ","
 		<< preprocess_ms << ","
 		<< scan_ms << ","
@@ -211,6 +219,57 @@ __global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* rang
 		ranges[currtile].y = L;
 }
 
+__global__ void countActiveTilesTouched(
+	int P,
+	const float2* points_xy,
+	int* radii,
+	const int* active_tile_mask,
+	uint32_t* tiles_touched,
+	dim3 grid)
+{
+	auto idx = cg::this_grid().thread_rank();
+	if (idx >= P)
+		return;
+
+	if (radii[idx] <= 0)
+	{
+		tiles_touched[idx] = 0;
+		return;
+	}
+
+	uint2 rect_min, rect_max;
+	getRect(points_xy[idx], radii[idx], rect_min, rect_max, grid);
+
+	uint32_t active_count = 0;
+	for (int y = rect_min.y; y < rect_max.y; y++)
+	{
+		for (int x = rect_min.x; x < rect_max.x; x++)
+		{
+			const uint32_t tile_id = y * grid.x + x;
+			active_count += active_tile_mask[tile_id] ? 1u : 0u;
+		}
+	}
+
+	tiles_touched[idx] = active_count;
+	if (active_count == 0)
+	{
+		radii[idx] = 0;
+	}
+}
+
+__global__ void clearActiveTileRanges(
+	int active_tile_count,
+	const int* active_tile_ids,
+	uint2* ranges)
+{
+	auto idx = cg::this_grid().thread_rank();
+	if (idx >= active_tile_count)
+		return;
+
+	const int tile_id = active_tile_ids[idx];
+	ranges[tile_id] = make_uint2(0, 0);
+}
+
 // Mark Gaussians as visible/invisible, based on view frustum testing
 void CudaRasterizer::Rasterizer::markVisible(
 	int P,
@@ -237,8 +296,8 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	obtain(chunk, geom.conic_opacity, P, 128);
 	obtain(chunk, geom.rgb, P * 3, 128);
 	obtain(chunk, geom.tiles_touched, P, 128);
-	cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
-	obtain(chunk, geom.scanning_space, geom.scan_size, 128);
+	geom.scan_size = 0;
+	geom.scanning_space = nullptr;
 	obtain(chunk, geom.point_offsets, P, 128);
 	return geom;
 }
@@ -256,14 +315,11 @@ CudaRasterizer::BinningState CudaRasterizer::BinningState::fromChunk(char*& chun
 {
 	BinningState binning;
 	obtain(chunk, binning.point_list, P, 128);
-	obtain(chunk, binning.point_list_unsorted, P, 128);
+	binning.point_list_unsorted = binning.point_list;
 	obtain(chunk, binning.point_list_keys, P, 128);
-	obtain(chunk, binning.point_list_keys_unsorted, P, 128);
-	cub::DeviceRadixSort::SortPairs(
-		nullptr, binning.sorting_size,
-		binning.point_list_keys_unsorted, binning.point_list_keys,
-		binning.point_list_unsorted, binning.point_list, P);
-	obtain(chunk, binning.list_sorting_space, binning.sorting_size, 128);
+	binning.point_list_keys_unsorted = binning.point_list_keys;
+	binning.sorting_size = 0;
+	binning.list_sorting_space = nullptr;
 	return binning;
 }
 
@@ -296,6 +352,9 @@ int CudaRasterizer::Rasterizer::forward(
 	const float time_duration,
 	const bool rot_4d, const int gaussian_dim, const bool force_sh_3d,
 	const float tan_fovx, float tan_fovy,
+	const int* active_tile_mask,
+	const int* active_tile_ids,
+	const int active_tile_count,
 	const bool prefiltered,
 	float* out_color,
 	float* out_flow,
@@ -321,6 +380,12 @@ int CudaRasterizer::Rasterizer::forward(
 	CudaEventTimer total_timer(profile_enabled);
 
 	size_t chunk_size = required<GeometryState>(P);
+	if (chunk_size > (1ULL << 32))
+	{
+		std::ostringstream oss;
+		oss << "Geometry buffer too large: " << chunk_size << " bytes for P=" << P;
+		throw std::runtime_error(oss.str());
+	}
 	char* chunkptr = geometryBuffer(chunk_size);
 	GeometryState geomState = GeometryState::fromChunk(chunkptr, P);
 
@@ -331,9 +396,19 @@ int CudaRasterizer::Rasterizer::forward(
 
 	dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
 	dim3 block(BLOCK_X, BLOCK_Y, 1);
+	const int total_tiles = tile_grid.x * tile_grid.y;
+	const int render_tile_count = active_tile_ids != nullptr ? active_tile_count : total_tiles;
+	dim3 render_grid = active_tile_ids != nullptr ? dim3(render_tile_count, 1, 1) : tile_grid;
 
 	// Dynamically resize image-based auxiliary buffers during training
 	size_t img_chunk_size = required<ImageState>(width * height);
+	if (img_chunk_size > (1ULL << 32))
+	{
+		std::ostringstream oss;
+		oss << "Image buffer too large: " << img_chunk_size
+			<< " bytes for width=" << width << " height=" << height;
+		throw std::runtime_error(oss.str());
+	}
 	char* img_chunkptr = imageBuffer(img_chunk_size);
 	ImageState imgState = ImageState::fromChunk(img_chunkptr, width * height);
 
@@ -381,21 +456,51 @@ int CudaRasterizer::Rasterizer::forward(
 		preprocess_ms = timer.stop();
 	}
 
+	if (active_tile_mask != nullptr)
+	{
+		countActiveTilesTouched << <(P + 255) / 256, 256 >> > (
+			P,
+			geomState.means2D,
+			radii,
+			active_tile_mask,
+			geomState.tiles_touched,
+			tile_grid);
+		CHECK_CUDA(, debug)
+	}
+
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
 	{
 		CudaEventTimer timer(profile_enabled);
-		CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
+		if (P > 0)
+		{
+			thrust::inclusive_scan(
+				thrust::device,
+				geomState.tiles_touched,
+				geomState.tiles_touched + P,
+				geomState.point_offsets);
+			CHECK_CUDA(, debug)
+		}
 		scan_ms = timer.stop();
 	}
 
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
-	int num_rendered;
+	uint32_t num_rendered_u32 = 0;
 	{
 		CudaEventTimer timer(profile_enabled);
-		CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+		CHECK_CUDA(cudaMemcpy(&num_rendered_u32, geomState.point_offsets + P - 1, sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
 		copy_rendered_ms = timer.stop();
 	}
+	const uint64_t max_rendered = static_cast<uint64_t>(P) * static_cast<uint64_t>(total_tiles);
+	if (num_rendered_u32 > max_rendered)
+	{
+		std::ostringstream oss;
+		oss << "Invalid num_rendered=" << num_rendered_u32
+			<< " exceeds max_possible=" << max_rendered
+			<< " (P=" << P << ", total_tiles=" << total_tiles << ")";
+		throw std::runtime_error(oss.str());
+	}
+	const int num_rendered = static_cast<int>(num_rendered_u32);
 
 	size_t binning_chunk_size = required<BinningState>(num_rendered);
 	char* binning_chunkptr = binningBuffer(binning_chunk_size);
@@ -410,8 +515,8 @@ int CudaRasterizer::Rasterizer::forward(
 			geomState.means2D,
 			geomState.depths,
 			geomState.point_offsets,
-			binningState.point_list_keys_unsorted,
-			binningState.point_list_unsorted,
+			binningState.point_list_keys,
+			binningState.point_list,
 			radii,
 			tile_grid);
 		CHECK_CUDA(, debug)
@@ -424,18 +529,32 @@ int CudaRasterizer::Rasterizer::forward(
 	// Sort complete list of (duplicated) Gaussian indices by keys
 	{
 		CudaEventTimer timer(profile_enabled);
-		CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
-			binningState.list_sorting_space,
-			binningState.sorting_size,
-			binningState.point_list_keys_unsorted, binningState.point_list_keys,
-			binningState.point_list_unsorted, binningState.point_list,
-			num_rendered, 0, 32 + bit), debug)
+		if (num_rendered > 0)
+		{
+			thrust::sort_by_key(
+				thrust::device,
+				binningState.point_list_keys,
+				binningState.point_list_keys + num_rendered,
+				binningState.point_list);
+			CHECK_CUDA(, debug)
+		}
 		sort_ms = timer.stop();
 	}
 
 	{
 		CudaEventTimer timer(profile_enabled);
-		CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
+		if (active_tile_ids != nullptr)
+		{
+			clearActiveTileRanges << <(render_tile_count + 255) / 256, 256 >> > (
+				render_tile_count,
+				active_tile_ids,
+				imgState.ranges);
+			CHECK_CUDA(, debug)
+		}
+		else
+		{
+			CHECK_CUDA(cudaMemset(imgState.ranges, 0, total_tiles * sizeof(uint2)), debug);
+		}
 		zero_ranges_ms = timer.stop();
 	}
 
@@ -456,8 +575,9 @@ int CudaRasterizer::Rasterizer::forward(
 	{
 		CudaEventTimer timer(profile_enabled);
 		CHECK_CUDA(FORWARD::render(
-			tile_grid, block,
+			render_grid, block,
 			imgState.ranges,
+			active_tile_ids,
 			binningState.point_list,
 			width, height,
 			geomState.means2D,
@@ -488,6 +608,8 @@ int CudaRasterizer::Rasterizer::forward(
 			P,
 			width,
 			height,
+			render_tile_count,
+			total_tiles,
 			num_rendered,
 			preprocess_ms,
 			scan_ms,
@@ -530,6 +652,8 @@ void CudaRasterizer::Rasterizer::backward(
     const float time_duration,
     const bool rot_4d, const int gaussian_dim, const bool force_sh_3d,
 	const float tan_fovx, float tan_fovy,
+	const int* active_tile_ids,
+	const int active_tile_count,
 	const int* radii,
 	char* geom_buffer,
 	char* binning_buffer,
@@ -573,6 +697,9 @@ void CudaRasterizer::Rasterizer::backward(
 
 	const dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
 	const dim3 block(BLOCK_X, BLOCK_Y, 1);
+	const int total_tiles = tile_grid.x * tile_grid.y;
+	const int render_tile_count = active_tile_ids != nullptr ? active_tile_count : total_tiles;
+	const dim3 render_grid = active_tile_ids != nullptr ? dim3(render_tile_count, 1, 1) : tile_grid;
 
 	// Compute loss gradients w.r.t. 2D mean position, conic matrix,
 	// opacity and RGB of Gaussians from per-pixel loss gradients.
@@ -582,9 +709,10 @@ void CudaRasterizer::Rasterizer::backward(
 	{
 		CudaEventTimer timer(profile_enabled);
 		CHECK_CUDA(BACKWARD::render(
-			tile_grid,
+			render_grid,
 			block,
 			imgState.ranges,
+			active_tile_ids,
 			binningState.point_list,
 			width, height,
 			background,
@@ -656,6 +784,8 @@ void CudaRasterizer::Rasterizer::backward(
 			P,
 			width,
 			height,
+			render_tile_count,
+			total_tiles,
 			R,
 			0.0f,
 			0.0f,

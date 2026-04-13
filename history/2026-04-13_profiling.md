@@ -156,3 +156,92 @@ python scripts/profile_backward_ops.py --config configs/dynerf/cook_spinach_debu
   - backward operator replay summary
 - Saved artifact:
   - `output/N3DV/cook_spinach_debug_profile_20260413_nolog/profiling/profiling_breakdown_dashboard_v2.png`
+
+## Follow-up: tile-wise training pipeline and tile ratio sweep
+
+- Added tile-wise training controls to `PipelineParams`:
+  - `tile_training`
+  - `tile_size`
+  - `tile_ratio`
+  - `tile_selection_mode`
+- Added `utils/tile_utils.py` to build per-view tile selections and active-pixel masks.
+- Updated `train.py` so tile training:
+  - samples active tiles before rendering
+  - forwards tile selections into the rasterizer
+  - applies masked L1 / SSIM / opacity-mask losses on active pixels only
+  - logs the effective active tile ratio during training
+- Updated the diff Gaussian rasterizer so the tile-wise path:
+  - launches forward/backward render kernels only for active tiles
+  - remaps active launch indices back to image tile coordinates
+  - recomputes `tiles_touched` against the active tile set and drops gaussians that touch no active tiles
+  - clears only active tile ranges instead of the whole tile grid
+- Added rasterizer profile fields:
+  - `active_tiles`
+  - `total_tiles`
+  - `active_tile_ratio`
+
+### Supporting implementation notes
+
+- Fixed CLI-over-config precedence in `train.py` so sweep-time overrides such as `--model_path`, `--tile_ratio`, and profiling paths are not overwritten by YAML config values.
+- Added a CUDA arch fallback in `gaussian_renderer/diff_gaussian_rasterization.py` to rebuild the extension for the actual local GPU capability when `TORCH_CUDA_ARCH_LIST` does not include it.
+- Replaced the unstable CUB temp-storage query path in the rasterizer with:
+  - `thrust::inclusive_scan`
+  - `thrust::sort_by_key`
+- This avoided invalid temp-buffer sizes observed on the local `RTX 2080 Ti (sm_75)` environment.
+
+### Sweep command
+
+```bash
+conda run -n 4dgs python scripts/profile_tile_ratio_sweep.py --config configs/dynerf/cook_spinach_debug.yaml --output_root output/N3DV/tile_ratio_sweep_20260413
+```
+
+### Sweep setup
+
+- Dataset/config: `configs/dynerf/cook_spinach_debug.yaml`
+- Profiling window: warmup at `280-299 iter`, averaged on `300-500 iter`
+- Tile size: `16x16`
+- Cases:
+  - baseline
+  - `tile_ratio=0.75`
+  - `tile_ratio=0.5`
+  - `tile_ratio=0.25`
+  - `tile_ratio=0.125`
+
+### Average iteration/rasterizer results
+
+- Baseline:
+  - `iter_cuda_ms`: `69.50`
+  - rasterizer forward total: `7.34 ms`
+  - rasterizer backward total: `21.22 ms`
+- `tile_ratio=0.75`:
+  - `iter_cuda_ms`: `72.48`
+  - speedup vs baseline: `0.959x`
+- `tile_ratio=0.5`:
+  - `iter_cuda_ms`: `65.01`
+  - speedup vs baseline: `1.069x`
+- `tile_ratio=0.25`:
+  - `iter_cuda_ms`: `56.52`
+  - speedup vs baseline: `1.230x`
+- `tile_ratio=0.125`:
+  - `iter_cuda_ms`: `53.83`
+  - speedup vs baseline: `1.291x`
+
+### Interpretation
+
+- Tile-wise rendering becomes worthwhile once the active tile ratio is low enough; on this debug setup, `0.75` is slightly slower than baseline.
+- The main gains come from rasterizer render/backward work shrinking with active tiles:
+  - forward total: `7.34 ms -> 3.09 ms` from baseline to `0.125`
+  - backward total: `21.22 ms -> 2.90 ms`
+  - forward render: `3.48 ms -> 0.20 ms`
+  - backward render: `20.67 ms -> 2.37 ms`
+- Overall iteration speedup saturates because non-rasterizer costs remain.
+- For this configuration, the practical efficiency region starts around `tile_ratio=0.25-0.5`.
+
+### Saved artifacts
+
+- Summary/report:
+  - `output/N3DV/tile_ratio_sweep_20260413/tile_ratio_sweep_summary.csv`
+  - `output/N3DV/tile_ratio_sweep_20260413/tile_ratio_sweep_report.txt`
+- Visualizations:
+  - `output/N3DV/tile_ratio_sweep_20260413/tile_ratio_iter_cuda_ms.png`
+  - `output/N3DV/tile_ratio_sweep_20260413/tile_ratio_speedup.png`

@@ -16,7 +16,7 @@ from .diff_gaussian_rasterization import GaussianRasterizationSettings, Gaussian
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh, eval_shfs_4d
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, tile_selection = None):
     """
     Render the scene. 
     
@@ -51,6 +51,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rot_4d=pc.rot_4d,
         gaussian_dim=pc.gaussian_dim,
         force_sh_3d=pc.force_sh_3d,
+        active_tile_mask=None if tile_selection is None else tile_selection["tile_mask"],
+        active_tile_ids=None if tile_selection is None else tile_selection["active_tile_ids"],
         prefiltered=False,
         debug=pipe.debug,
         profile=getattr(pipe, "profile_rasterizer", False),
@@ -194,4 +196,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "alpha": alpha,
             "flow": flow,
             "opacity_t": marginal_t,
-            "sigma": sigma}
+            "sigma": sigma,
+            "active_tile_count": None if tile_selection is None else tile_selection["num_active_tiles"],
+            "total_tile_count": None if tile_selection is None else tile_selection["total_tiles"],
+            "active_tile_ratio": 1.0 if tile_selection is None else tile_selection["active_ratio"]}

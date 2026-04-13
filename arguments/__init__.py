@@ -76,6 +76,10 @@ class PipelineParams(ParamGroup):
         self.env_optimize_from = 0
         self.eval_shfs_4d = False
         self.da_densification = False
+        self.tile_training = False
+        self.tile_size = 16
+        self.tile_ratio = 1.0
+        self.tile_selection_mode = "random"
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):

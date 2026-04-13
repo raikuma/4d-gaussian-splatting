@@ -925,6 +925,7 @@ template <uint32_t C>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
+	const int* __restrict__ active_tile_ids,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float* __restrict__ bg_color,
@@ -948,14 +949,18 @@ renderCUDA(
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
 	const uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
-	const uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
+	const uint32_t block_tile_id = active_tile_ids != nullptr
+		? static_cast<uint32_t>(active_tile_ids[block.group_index().x])
+		: block.group_index().y * horizontal_blocks + block.group_index().x;
+	const uint2 tile_coord = { block_tile_id % horizontal_blocks, block_tile_id / horizontal_blocks };
+	const uint2 pix_min = { tile_coord.x * BLOCK_X, tile_coord.y * BLOCK_Y };
 	const uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
 	const float2 pixf = { (float)pix.x, (float)pix.y };
 
 	const bool inside = pix.x < W&& pix.y < H;
-	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
+	const uint2 range = ranges[block_tile_id];
 
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
@@ -1227,6 +1232,7 @@ void BACKWARD::preprocess(
 void BACKWARD::render(
 	const dim3 grid, const dim3 block,
 	const uint2* ranges,
+	const int* active_tile_ids,
 	const uint32_t* point_list,
 	int W, int H,
 	const float* bg_color,
@@ -1249,6 +1255,7 @@ void BACKWARD::render(
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
+		active_tile_ids,
 		point_list,
 		W, H,
 		bg_color,

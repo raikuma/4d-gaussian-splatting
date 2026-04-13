@@ -15,6 +15,13 @@ import torch
 # from . import _C
 import os
 from torch.utils.cpp_extension import load
+if torch.cuda.is_available():
+    major, minor = torch.cuda.get_device_capability()
+    detected_arch = f"{major}.{minor}"
+    configured_arches = os.environ.get("TORCH_CUDA_ARCH_LIST", "")
+    normalized_arches = [arch.replace("+PTX", "").strip() for arch in configured_arches.split(";") if arch.strip()]
+    if detected_arch not in normalized_arches:
+        os.environ["TORCH_CUDA_ARCH_LIST"] = detected_arch
 parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "diff-gaussian-rasterization")
 _C = load(
     name='diff_gaussian_rasterization',
@@ -49,6 +56,8 @@ def rasterize_gaussians(
     rotations,
     rotations_r,
     cov3Ds_precomp,
+    active_tile_mask,
+    active_tile_ids,
     raster_settings,
 ):
     return _RasterizeGaussians.apply(
@@ -64,6 +73,8 @@ def rasterize_gaussians(
         rotations,
         rotations_r,
         cov3Ds_precomp,
+        active_tile_mask,
+        active_tile_ids,
         raster_settings,
     )
 
@@ -83,6 +94,8 @@ class _RasterizeGaussians(torch.autograd.Function):
         rotations,
         rotations_r,
         cov3Ds_precomp,
+        active_tile_mask,
+        active_tile_ids,
         raster_settings,
     ):
 
@@ -115,6 +128,8 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.rot_4d,
             raster_settings.gaussian_dim,
             raster_settings.force_sh_3d,
+            active_tile_mask,
+            active_tile_ids,
             raster_settings.prefiltered,
             raster_settings.debug,
             raster_settings.profile,
@@ -137,7 +152,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, out_means3D, scales, rotations, cov3Ds_precomp, radii, sh, 
-                                flow_2d, opacities, ts, scales_t, rotations_r,
+                                flow_2d, opacities, ts, scales_t, rotations_r, active_tile_ids,
                                 geomBuffer, binningBuffer, imgBuffer)
         return color, radii, depth, 1-T, flow, covs_com
 
@@ -148,7 +163,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
         (colors_precomp, means3D, out_means3D, scales, rotations, cov3Ds_precomp, radii, sh, 
-         flow_2d, opacities, ts, scales_t, rotations_r,
+         flow_2d, opacities, ts, scales_t, rotations_r, active_tile_ids,
          geomBuffer, binningBuffer, imgBuffer) = ctx.saved_tensors
         
         # Restructure args as C++ method expects them
@@ -183,6 +198,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.rot_4d,
                 raster_settings.gaussian_dim,
                 raster_settings.force_sh_3d,
+                active_tile_ids,
                 geomBuffer,
                 num_rendered,
                 binningBuffer,
@@ -221,6 +237,8 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_rotations_r,
             grad_cov3Ds_precomp,
             None,
+            None,
+            None,
         )
 
         return grads
@@ -242,6 +260,8 @@ class GaussianRasterizationSettings(NamedTuple):
     rot_4d: bool
     gaussian_dim: int
     force_sh_3d: bool
+    active_tile_mask: torch.Tensor
+    active_tile_ids: torch.Tensor
     prefiltered : bool
     debug : bool
     profile : bool
@@ -300,6 +320,12 @@ class GaussianRasterizer(nn.Module):
             rotations_r = torch.Tensor([])
         if cov3D_precomp is None:
             cov3D_precomp = torch.Tensor([])
+        active_tile_mask = raster_settings.active_tile_mask
+        active_tile_ids = raster_settings.active_tile_ids
+        if active_tile_mask is None:
+            active_tile_mask = torch.empty(0, dtype=torch.int32, device=means3D.device)
+        if active_tile_ids is None:
+            active_tile_ids = torch.empty(0, dtype=torch.int32, device=means3D.device)
 
         # Invoke C++/CUDA rasterization routine
         return rasterize_gaussians(
@@ -315,5 +341,7 @@ class GaussianRasterizer(nn.Module):
             rotations,
             rotations_r,
             cov3D_precomp,
+            active_tile_mask,
+            active_tile_ids,
             raster_settings,
         )

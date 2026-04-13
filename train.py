@@ -29,15 +29,32 @@ import numpy as np
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader
+from utils.tile_utils import build_tile_selection
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
+
+def masked_l1_loss(network_output, gt, pixel_mask):
+    pixel_mask = pixel_mask.to(dtype=network_output.dtype)
+    denom = pixel_mask.sum().clamp_min(1.0) * network_output.shape[0]
+    return torch.abs((network_output - gt) * pixel_mask).sum() / denom
+
+
+def build_ssim_inputs(network_output, gt, pixel_mask):
+    pixel_mask = pixel_mask.to(dtype=network_output.dtype)
+    detached_fill = network_output.detach()
+    masked_output = network_output * pixel_mask + detached_fill * (1.0 - pixel_mask)
+    masked_gt = gt * pixel_mask + detached_fill * (1.0 - pixel_mask)
+    return masked_output, masked_gt
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint, debug_from,
              gaussian_dim, time_duration, num_pts, num_pts_ratio, rot_4d, force_sh_3d, batch_size, num_workers, ply_path,
              profile_training, profile_rasterizer, profile_from_iter, profile_warmup_iters, profile_iters, profile_output_dir):
+    if pipe.tile_training and pipe.tile_size != 16:
+        raise ValueError("tile-wise rasterizer currently supports tile_size=16 only.")
     
     if dataset.frame_ratio > 1:
         time_duration = [time_duration[0] / dataset.frame_ratio,  time_duration[1] / dataset.frame_ratio]
@@ -82,6 +99,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_l1loss_for_log = 0.0
     ema_ssimloss_for_log = 0.0
+    ema_tile_ratio_for_log = 1.0
     lambda_all = [key for key in opt.__dict__.keys() if key.startswith('lambda') and key!='lambda_dssim']
     for lambda_name in lambda_all:
         vars()[f"ema_{lambda_name.replace('lambda_','')}_for_log"] = 0.0
@@ -126,32 +144,54 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 batch_point_grad = []
                 batch_visibility_filter = []
                 batch_radii = []
+                batch_tile_ratios = []
 
                 for batch_idx in range(batch_size):
                     gt_image, viewpoint_cam = batch_data[batch_idx]
                     with iter_profiler.section("view_to_cuda"):
                         gt_image = gt_image.cuda()
                         viewpoint_cam = viewpoint_cam.cuda()
+                    with iter_profiler.section("view_tile_mask"):
+                        tile_selection = None
+                        if pipe.tile_training:
+                            tile_selection = build_tile_selection(
+                                image_height=int(viewpoint_cam.image_height),
+                                image_width=int(viewpoint_cam.image_width),
+                                tile_size=pipe.tile_size,
+                                tile_ratio=pipe.tile_ratio,
+                                device=gt_image.device,
+                                selection_mode=pipe.tile_selection_mode,
+                            )
 
                     with iter_profiler.section("view_render"):
-                        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+                        render_pkg = render(viewpoint_cam, gaussians, pipe, background, tile_selection=tile_selection)
                         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                         depth = render_pkg["depth"]
                         alpha = render_pkg["alpha"]
                         opacity_t = render_pkg["opacity_t"]
                         sigma = render_pkg["sigma"]
+                        active_tile_ratio = render_pkg["active_tile_ratio"]
+                        pixel_mask = None if tile_selection is None else tile_selection["pixel_mask"]
 
                     with iter_profiler.section("view_loss"):
-                        Ll1 = l1_loss(image, gt_image)
-                        Lssim = 1.0 - ssim(image, gt_image)
+                        if pixel_mask is None:
+                            Ll1 = l1_loss(image, gt_image)
+                            Lssim = 1.0 - ssim(image, gt_image)
+                        else:
+                            Ll1 = masked_l1_loss(image, gt_image, pixel_mask)
+                            ssim_image, ssim_gt = build_ssim_inputs(image, gt_image, pixel_mask)
+                            Lssim = 1.0 - ssim(ssim_image, ssim_gt)
                         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
 
                         ###### opa mask Loss ######
                         if opt.lambda_opa_mask > 0:
                             o = alpha.clamp(1e-6, 1-1e-6)
                             sky = 1 - viewpoint_cam.gt_alpha_mask
-
-                            Lopa_mask = (- sky * torch.log(1 - o)).mean()
+                            if pixel_mask is None:
+                                Lopa_mask = (- sky * torch.log(1 - o)).mean()
+                            else:
+                                sky = sky * pixel_mask
+                                Lopa_mask = (- sky * torch.log(1 - o)).sum() / sky.sum().clamp_min(1.0)
 
                             # lambda_opa_mask = opt.lambda_opa_mask * (1 - 0.99 * min(1, iteration/opt.iterations))
                             lambda_opa_mask = opt.lambda_opa_mask
@@ -196,6 +236,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     batch_point_grad.append(torch.norm(viewspace_point_tensor.grad[:,:2], dim=-1))
                     batch_radii.append(radii)
                     batch_visibility_filter.append(visibility_filter)
+                    batch_tile_ratios.append(active_tile_ratio)
 
                 with iter_profiler.section("batch_reduce"):
                     if batch_size > 1:
@@ -230,6 +271,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
                     ema_l1loss_for_log = 0.4 * Ll1.item() + 0.6 * ema_l1loss_for_log
                     ema_ssimloss_for_log = 0.4 * Lssim.item() + 0.6 * ema_ssimloss_for_log
+                    if batch_tile_ratios:
+                        batch_tile_ratio = sum(batch_tile_ratios) / len(batch_tile_ratios)
+                        ema_tile_ratio_for_log = 0.4 * batch_tile_ratio + 0.6 * ema_tile_ratio_for_log
 
                     for lambda_name in lambda_all:
                         if opt.__dict__[lambda_name] > 0:
@@ -242,6 +286,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                                 "Ll1": f"{ema_l1loss_for_log:.{4}f}",
                                                 "Lssim": f"{ema_ssimloss_for_log:.{4}f}",
                                                 "#": f"{gaussians.get_xyz.shape[0]}",}
+                        if pipe.tile_training:
+                            postfix["Tile"] = f"{ema_tile_ratio_for_log:.2f}"
                         if psnr_for_log is not None:
                             postfix["PSNR"] = f"{psnr_for_log:.{2}f}"
 
@@ -446,6 +492,10 @@ if __name__ == "__main__":
     parser.add_argument("--profile_output_dir", type=str, default="", help="Directory to store profiling CSV/summary outputs.")
     
     args = parser.parse_args(sys.argv[1:])
+    explicit_cli_keys = set()
+    for token in sys.argv[1:]:
+        if token.startswith("--"):
+            explicit_cli_keys.add(token[2:].split("=", 1)[0].replace("-", "_"))
         
     cfg = OmegaConf.load(args.config)
     def recursive_merge(key, host):
@@ -454,7 +504,8 @@ if __name__ == "__main__":
                 recursive_merge(key1, host[key])
         else:
             assert hasattr(args, key), key
-            setattr(args, key, host[key])
+            if key not in explicit_cli_keys:
+                setattr(args, key, host[key])
     for k in cfg.keys():
         recursive_merge(k, cfg)
 
