@@ -21,6 +21,7 @@ from utils.general_utils import safe_state, knn
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr, easy_cmap
+from utils.profiler_utils import IterationProfiler
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from torchvision.utils import make_grid, save_image
@@ -35,13 +36,34 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint, debug_from,
-             gaussian_dim, time_duration, num_pts, num_pts_ratio, rot_4d, force_sh_3d, batch_size, num_workers, ply_path):
+             gaussian_dim, time_duration, num_pts, num_pts_ratio, rot_4d, force_sh_3d, batch_size, num_workers, ply_path,
+             profile_training, profile_rasterizer, profile_from_iter, profile_warmup_iters, profile_iters, profile_output_dir):
     
     if dataset.frame_ratio > 1:
         time_duration = [time_duration[0] / dataset.frame_ratio,  time_duration[1] / dataset.frame_ratio]
     
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
+    profiling_enabled = profile_training or profile_rasterizer
+    if profile_output_dir:
+        profiling_dir = os.path.abspath(profile_output_dir)
+    else:
+        profiling_dir = os.path.join(dataset.model_path, "profiling")
+    if profiling_enabled:
+        os.makedirs(profiling_dir, exist_ok=True)
+    if profile_rasterizer:
+        os.environ["FOCUSGS_PROFILE_DIR"] = profiling_dir
+    else:
+        os.environ.pop("FOCUSGS_PROFILE_DIR", None)
+    pipe.profile_rasterizer = profile_rasterizer
+    pipe.current_iteration = -1
+    iter_profiler = IterationProfiler(
+        enabled=profile_training,
+        output_dir=profiling_dir,
+        start_iter=profile_from_iter,
+        warmup_iters=profile_warmup_iters,
+        active_iters=profile_iters,
+    )
     gaussians = GaussianModel(dataset.sh_degree, gaussian_dim=gaussian_dim, time_duration=time_duration, rot_4d=rot_4d, force_sh_3d=force_sh_3d, sh_degree_t=2 if pipe.eval_shfs_4d else 0)
     scene = Scene(dataset, gaussians, num_pts=num_pts, num_pts_ratio=num_pts_ratio, time_duration=time_duration, ply_path=ply_path)
     gaussians.training_setup(opt)
@@ -79,180 +101,207 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     training_dataloader = DataLoader(training_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers if dataset.dataloader else 0, collate_fn=lambda x: x, drop_last=True)
      
     iteration = first_iter
-    while iteration < opt.iterations + 1:
-        for batch_data in training_dataloader:
-            iteration += 1
-            if iteration > opt.iterations:
-                break
+    try:
+        while iteration < opt.iterations + 1:
+            for batch_data in training_dataloader:
+                iteration += 1
+                if iteration > opt.iterations:
+                    break
 
-            iter_start.record()
-            gaussians.update_learning_rate(iteration)
-            
-            # Every 1000 its we increase the levels of SH up to a maximum degree
-            if iteration % opt.sh_increase_interval == 0:
-                gaussians.oneupSHdegree()
-                
-            # Render
-            if (iteration - 1) == debug_from:
-                pipe.debug = True
-            
-            batch_point_grad = []
-            batch_visibility_filter = []
-            batch_radii = []
-            
-            for batch_idx in range(batch_size):
-                gt_image, viewpoint_cam = batch_data[batch_idx]
-                gt_image = gt_image.cuda()
-                viewpoint_cam = viewpoint_cam.cuda()
+                pipe.current_iteration = iteration
+                iter_profiler.start_iteration(iteration)
+                iter_start.record()
 
-                render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-                image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-                depth = render_pkg["depth"]
-                alpha = render_pkg["alpha"]
-                opacity_t = render_pkg["opacity_t"]
-                sigma = render_pkg["sigma"]
+                with iter_profiler.section("lr_and_sh"):
+                    gaussians.update_learning_rate(iteration)
 
-                # Loss
-                Ll1 = l1_loss(image, gt_image)
-                Lssim = 1.0 - ssim(image, gt_image)
-                loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
-                
-                ###### opa mask Loss ######
-                if opt.lambda_opa_mask > 0:
-                    o = alpha.clamp(1e-6, 1-1e-6)
-                    sky = 1 - viewpoint_cam.gt_alpha_mask
+                    # Every 1000 its we increase the levels of SH up to a maximum degree
+                    if iteration % opt.sh_increase_interval == 0:
+                        gaussians.oneupSHdegree()
 
-                    Lopa_mask = (- sky * torch.log(1 - o)).mean()
+                # Render
+                if (iteration - 1) == debug_from:
+                    pipe.debug = True
 
-                    # lambda_opa_mask = opt.lambda_opa_mask * (1 - 0.99 * min(1, iteration/opt.iterations))
-                    lambda_opa_mask = opt.lambda_opa_mask
-                    loss = loss + lambda_opa_mask * Lopa_mask
-                ###### opa mask Loss ######
-                
-                ###### rigid loss ######
-                if opt.lambda_rigid > 0:
-                    k = 20
-                    # cur_time = viewpoint_cam.timestamp
-                    # _, delta_mean = gaussians.get_current_covariance_and_mean_offset(1.0, cur_time)
-                    xyz_mean = gaussians.get_xyz
-                    xyz_cur =  xyz_mean #  + delta_mean
-                    idx, dist = knn(xyz_cur[None].contiguous().detach(), 
-                                    xyz_cur[None].contiguous().detach(), 
-                                    k)
-                    _, velocity = gaussians.get_current_covariance_and_mean_offset(1.0, gaussians.get_t + 0.1)
-                    weight = torch.exp(-100 * dist)
-                    # cur_marginal_t = gaussians.get_marginal_t(cur_time).detach().squeeze(-1)
-                    # marginal_weights = cur_marginal_t[idx] * cur_marginal_t[None,:,None]
-                    # weight *= marginal_weights
-                    
-                    # mean_t, cov_t = gaussians.get_t, gaussians.get_cov_t(scaling_modifier=1)
-                    # mean_t_nn, cov_t_nn = mean_t[idx], cov_t[idx]
-                    # weight *= torch.exp(-0.5*(mean_t[None, :, None]-mean_t_nn)**2/cov_t[None, :, None]/cov_t_nn*(cov_t[None, :, None]+cov_t_nn)).squeeze(-1).detach()
-                    vel_dist = torch.norm(velocity[idx] - velocity[None, :, None], p=2, dim=-1)
-                    Lrigid = (weight * vel_dist).sum() / k / xyz_cur.shape[0]
-                    loss = loss + opt.lambda_rigid * Lrigid
-                ########################
-                
-                ###### motion loss ######
-                if opt.lambda_motion > 0:
-                    _, velocity = gaussians.get_current_covariance_and_mean_offset(1.0, gaussians.get_t + 0.1)
-                    Lmotion = velocity.norm(p=2, dim=1).mean()
-                    loss = loss + opt.lambda_motion * Lmotion
-                ########################
+                batch_point_grad = []
+                batch_visibility_filter = []
+                batch_radii = []
 
-                loss = loss / batch_size
-                loss.backward()
-                batch_point_grad.append(torch.norm(viewspace_point_tensor.grad[:,:2], dim=-1))
-                batch_radii.append(radii)
-                batch_visibility_filter.append(visibility_filter)
+                for batch_idx in range(batch_size):
+                    gt_image, viewpoint_cam = batch_data[batch_idx]
+                    with iter_profiler.section("view_to_cuda"):
+                        gt_image = gt_image.cuda()
+                        viewpoint_cam = viewpoint_cam.cuda()
 
-            if batch_size > 1:
-                visibility_count = torch.stack(batch_visibility_filter,1).sum(1)
-                visibility_filter = visibility_count > 0
-                radii = torch.stack(batch_radii,1).max(1)[0]
-                
-                batch_viewspace_point_grad = torch.stack(batch_point_grad,1).sum(1)
-                batch_viewspace_point_grad[visibility_filter] = batch_viewspace_point_grad[visibility_filter] * batch_size / visibility_count[visibility_filter]
-                batch_viewspace_point_grad = batch_viewspace_point_grad.unsqueeze(1)
-                
-                if gaussians.gaussian_dim == 4:
-                    batch_t_grad = gaussians._t.grad.clone()[:,0].detach()
-                    batch_t_grad[visibility_filter] = batch_t_grad[visibility_filter] * batch_size / visibility_count[visibility_filter]
-                    batch_t_grad = batch_t_grad.unsqueeze(1)
-            else:
-                if gaussians.gaussian_dim == 4:
-                    batch_t_grad = gaussians._t.grad.clone().detach()
-            
-            iter_end.record()
-            loss_dict = {"Ll1": Ll1,
-                        "Lssim": Lssim}
+                    with iter_profiler.section("view_render"):
+                        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+                        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                        depth = render_pkg["depth"]
+                        alpha = render_pkg["alpha"]
+                        opacity_t = render_pkg["opacity_t"]
+                        sigma = render_pkg["sigma"]
 
-            with torch.no_grad():
-                psnr_for_log = psnr(image, gt_image).mean().double()
-                # Progress bar
-                ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-                ema_l1loss_for_log = 0.4 * Ll1.item() + 0.6 * ema_l1loss_for_log
-                ema_ssimloss_for_log = 0.4 * Lssim.item() + 0.6 * ema_ssimloss_for_log
-                
-                for lambda_name in lambda_all:
-                    if opt.__dict__[lambda_name] > 0:
-                        ema = vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"]
-                        vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"] = 0.4 * vars()[f"L{lambda_name.replace('lambda_', '')}"].item() + 0.6*ema
-                        loss_dict[lambda_name.replace("lambda_", "L")] = vars()[lambda_name.replace("lambda_", "L")]
-                        
-                if iteration % 10 == 0:
-                    postfix = {"Loss": f"{ema_loss_for_log:.{7}f}",
-                                            "PSNR": f"{psnr_for_log:.{2}f}",
-                                            "Ll1": f"{ema_l1loss_for_log:.{4}f}",
-                                            "Lssim": f"{ema_ssimloss_for_log:.{4}f}",
-                                            "#": f"{gaussians.get_xyz.shape[0]}",}
-                    
+                    with iter_profiler.section("view_loss"):
+                        Ll1 = l1_loss(image, gt_image)
+                        Lssim = 1.0 - ssim(image, gt_image)
+                        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
+
+                        ###### opa mask Loss ######
+                        if opt.lambda_opa_mask > 0:
+                            o = alpha.clamp(1e-6, 1-1e-6)
+                            sky = 1 - viewpoint_cam.gt_alpha_mask
+
+                            Lopa_mask = (- sky * torch.log(1 - o)).mean()
+
+                            # lambda_opa_mask = opt.lambda_opa_mask * (1 - 0.99 * min(1, iteration/opt.iterations))
+                            lambda_opa_mask = opt.lambda_opa_mask
+                            loss = loss + lambda_opa_mask * Lopa_mask
+                        ###### opa mask Loss ######
+
+                        ###### rigid loss ######
+                        if opt.lambda_rigid > 0:
+                            k = 20
+                            # cur_time = viewpoint_cam.timestamp
+                            # _, delta_mean = gaussians.get_current_covariance_and_mean_offset(1.0, cur_time)
+                            xyz_mean = gaussians.get_xyz
+                            xyz_cur =  xyz_mean #  + delta_mean
+                            idx, dist = knn(xyz_cur[None].contiguous().detach(),
+                                            xyz_cur[None].contiguous().detach(),
+                                            k)
+                            _, velocity = gaussians.get_current_covariance_and_mean_offset(1.0, gaussians.get_t + 0.1)
+                            weight = torch.exp(-100 * dist)
+                            # cur_marginal_t = gaussians.get_marginal_t(cur_time).detach().squeeze(-1)
+                            # marginal_weights = cur_marginal_t[idx] * cur_marginal_t[None,:,None]
+                            # weight *= marginal_weights
+
+                            # mean_t, cov_t = gaussians.get_t, gaussians.get_cov_t(scaling_modifier=1)
+                            # mean_t_nn, cov_t_nn = mean_t[idx], cov_t[idx]
+                            # weight *= torch.exp(-0.5*(mean_t[None, :, None]-mean_t_nn)**2/cov_t[None, :, None]/cov_t_nn*(cov_t[None, :, None]+cov_t_nn)).squeeze(-1).detach()
+                            vel_dist = torch.norm(velocity[idx] - velocity[None, :, None], p=2, dim=-1)
+                            Lrigid = (weight * vel_dist).sum() / k / xyz_cur.shape[0]
+                            loss = loss + opt.lambda_rigid * Lrigid
+                        ########################
+
+                        ###### motion loss ######
+                        if opt.lambda_motion > 0:
+                            _, velocity = gaussians.get_current_covariance_and_mean_offset(1.0, gaussians.get_t + 0.1)
+                            Lmotion = velocity.norm(p=2, dim=1).mean()
+                            loss = loss + opt.lambda_motion * Lmotion
+                        ########################
+
+                    with iter_profiler.section("view_backward"):
+                        loss = loss / batch_size
+                        loss.backward()
+
+                    batch_point_grad.append(torch.norm(viewspace_point_tensor.grad[:,:2], dim=-1))
+                    batch_radii.append(radii)
+                    batch_visibility_filter.append(visibility_filter)
+
+                with iter_profiler.section("batch_reduce"):
+                    if batch_size > 1:
+                        visibility_count = torch.stack(batch_visibility_filter,1).sum(1)
+                        visibility_filter = visibility_count > 0
+                        radii = torch.stack(batch_radii,1).max(1)[0]
+
+                        batch_viewspace_point_grad = torch.stack(batch_point_grad,1).sum(1)
+                        batch_viewspace_point_grad[visibility_filter] = batch_viewspace_point_grad[visibility_filter] * batch_size / visibility_count[visibility_filter]
+                        batch_viewspace_point_grad = batch_viewspace_point_grad.unsqueeze(1)
+
+                        if gaussians.gaussian_dim == 4:
+                            batch_t_grad = gaussians._t.grad.clone()[:,0].detach()
+                            batch_t_grad[visibility_filter] = batch_t_grad[visibility_filter] * batch_size / visibility_count[visibility_filter]
+                            batch_t_grad = batch_t_grad.unsqueeze(1)
+                    else:
+                        if gaussians.gaussian_dim == 4:
+                            batch_t_grad = gaussians._t.grad.clone().detach()
+
+                iter_end.record()
+                loss_dict = {"Ll1": Ll1,
+                            "Lssim": Lssim}
+
+                with torch.no_grad():
+                    profiling_iteration = iter_profiler.is_active()
+                    if not profiling_iteration:
+                        psnr_for_log = psnr(image, gt_image).mean().double()
+                    else:
+                        psnr_for_log = None
+
+                    # Progress bar / EMA stats are kept, but heavy logging/reporting is disabled while profiling.
+                    ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+                    ema_l1loss_for_log = 0.4 * Ll1.item() + 0.6 * ema_l1loss_for_log
+                    ema_ssimloss_for_log = 0.4 * Lssim.item() + 0.6 * ema_ssimloss_for_log
+
                     for lambda_name in lambda_all:
                         if opt.__dict__[lambda_name] > 0:
-                            ema_loss = vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"]
-                            postfix[lambda_name.replace("lambda_", "L")] = f"{ema_loss:.{4}f}"
-                            
-                    progress_bar.set_postfix(postfix)
-                    progress_bar.update(10)
-                if iteration == opt.iterations:
-                    progress_bar.close()
+                            ema = vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"]
+                            vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"] = 0.4 * vars()[f"L{lambda_name.replace('lambda_', '')}"].item() + 0.6*ema
+                            loss_dict[lambda_name.replace("lambda_", "L")] = vars()[lambda_name.replace("lambda_", "L")]
 
-                # Log and save
-                test_psnr = training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), loss_dict)
-                if (iteration in testing_iterations):
-                    if test_psnr >= best_psnr:
-                        best_psnr = test_psnr
-                        print("\n[ITER {}] Saving best checkpoint".format(iteration))
-                        torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt_best.pth")
-                        
-                if (iteration in saving_iterations):
-                    print("\n[ITER {}] Saving Gaussians".format(iteration))
-                    scene.save(iteration)
+                    if iteration % 10 == 0:
+                        postfix = {"Loss": f"{ema_loss_for_log:.{7}f}",
+                                                "Ll1": f"{ema_l1loss_for_log:.{4}f}",
+                                                "Lssim": f"{ema_ssimloss_for_log:.{4}f}",
+                                                "#": f"{gaussians.get_xyz.shape[0]}",}
+                        if psnr_for_log is not None:
+                            postfix["PSNR"] = f"{psnr_for_log:.{2}f}"
 
-                # Densification
-                if iteration < opt.densify_until_iter and (opt.densify_until_num_points < 0 or gaussians.get_xyz.shape[0] < opt.densify_until_num_points):
-                    # Keep track of max radii in image-space for pruning
-                    gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                    if batch_size == 1:
-                        gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None)
-                    else:
-                        gaussians.add_densification_stats_grad(batch_viewspace_point_grad, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None,
-                                                               da_densification=pipe.da_densification, opacity_t=opacity_t, sigma=sigma)
-                        
-                    if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                        size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                        gaussians.densify_and_prune(opt.densify_grad_threshold, opt.thresh_opa_prune, scene.cameras_extent, size_threshold, opt.densify_grad_t_threshold)
-                    
-                    if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                        gaussians.reset_opacity()
-                        
-                # Optimizer step
-                if iteration < opt.iterations:
-                    gaussians.optimizer.step()
-                    gaussians.optimizer.zero_grad(set_to_none = True)
-                    if pipe.env_map_res and iteration < pipe.env_optimize_until:
-                        env_map_optimizer.step()
-                        env_map_optimizer.zero_grad(set_to_none = True)
+                        for lambda_name in lambda_all:
+                            if opt.__dict__[lambda_name] > 0:
+                                ema_loss = vars()[f"ema_{lambda_name.replace('lambda_', '')}_for_log"]
+                                postfix[lambda_name.replace("lambda_", "L")] = f"{ema_loss:.{4}f}"
+
+                        progress_bar.set_postfix(postfix)
+                        progress_bar.update(10)
+                    if iteration == opt.iterations:
+                        progress_bar.close()
+
+                    if not profiling_iteration:
+                        with iter_profiler.section("logging_and_report"):
+                            # Log and save reports only when profiling is inactive.
+                            test_psnr = training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), loss_dict)
+                            if (iteration in testing_iterations):
+                                if test_psnr >= best_psnr:
+                                    best_psnr = test_psnr
+                                    print("\n[ITER {}] Saving best checkpoint".format(iteration))
+                                    torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt_best.pth")
+
+                    if (iteration in saving_iterations):
+                        print("\n[ITER {}] Saving Gaussians".format(iteration))
+                        scene.save(iteration)
+
+                    if profiling_iteration and iteration in testing_iterations:
+                        print(f"\n[ITER {iteration}] Skipping training_report during active profiling")
+
+                    with iter_profiler.section("densify"):
+                        # Densification
+                        if iteration < opt.densify_until_iter and (opt.densify_until_num_points < 0 or gaussians.get_xyz.shape[0] < opt.densify_until_num_points):
+                            # Keep track of max radii in image-space for pruning
+                            gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                            if batch_size == 1:
+                                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None)
+                            else:
+                                gaussians.add_densification_stats_grad(batch_viewspace_point_grad, visibility_filter, batch_t_grad if gaussians.gaussian_dim == 4 else None,
+                                                                       da_densification=pipe.da_densification, opacity_t=opacity_t, sigma=sigma)
+
+                            if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                                size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                                gaussians.densify_and_prune(opt.densify_grad_threshold, opt.thresh_opa_prune, scene.cameras_extent, size_threshold, opt.densify_grad_t_threshold)
+
+                            if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                                gaussians.reset_opacity()
+
+                    with iter_profiler.section("optimizer"):
+                        # Optimizer step
+                        if iteration < opt.iterations:
+                            gaussians.optimizer.step()
+                            gaussians.optimizer.zero_grad(set_to_none = True)
+                            if pipe.env_map_res and iteration < pipe.env_optimize_until:
+                                env_map_optimizer.step()
+                                env_map_optimizer.zero_grad(set_to_none = True)
+
+                iter_profiler.end_iteration(gaussians.get_xyz.shape[0])
+    finally:
+        iter_profiler.close()
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -389,6 +438,12 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=0)
 
     parser.add_argument("--ply_path", type=str, default=None, help="Path to a PLY file to use instead of the one in the scene folder")
+    parser.add_argument("--profile_training", action="store_true", help="Enable per-iteration Python/CUDA section profiling.")
+    parser.add_argument("--profile_rasterizer", action="store_true", help="Enable CUDA rasterizer step profiling.")
+    parser.add_argument("--profile_from_iter", type=int, default=1, help="First training iteration eligible for profiling.")
+    parser.add_argument("--profile_warmup_iters", type=int, default=2, help="Warmup iterations to skip before writing profile results.")
+    parser.add_argument("--profile_iters", type=int, default=10, help="Number of iterations to profile after warmup. Use -1 to keep profiling.")
+    parser.add_argument("--profile_output_dir", type=str, default="", help="Directory to store profiling CSV/summary outputs.")
     
     args = parser.parse_args(sys.argv[1:])
         
@@ -417,7 +472,8 @@ if __name__ == "__main__":
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.start_checkpoint, args.debug_from,
-             args.gaussian_dim, args.time_duration, args.num_pts, args.num_pts_ratio, args.rot_4d, args.force_sh_3d, args.batch_size, args.num_workers, args.ply_path)
+             args.gaussian_dim, args.time_duration, args.num_pts, args.num_pts_ratio, args.rot_4d, args.force_sh_3d, args.batch_size, args.num_workers, args.ply_path,
+             args.profile_training, args.profile_rasterizer, args.profile_from_iter, args.profile_warmup_iters, args.profile_iters, args.profile_output_dir)
 
     # All done
     print("\nTraining complete.")

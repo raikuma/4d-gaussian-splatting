@@ -14,6 +14,7 @@
 
 #include "config.h"
 #include "stdio.h"
+#include <cuda_runtime.h>
 
 #define BLOCK_SIZE (BLOCK_X * BLOCK_Y)
 #define NUM_WARPS (BLOCK_SIZE/32)
@@ -170,5 +171,41 @@ std::cerr << "\n[CUDA ERROR] in " << __FILE__ << "\nLine " << __LINE__ << ": " <
 throw std::runtime_error(cudaGetErrorString(ret)); \
 } \
 }
+
+struct CudaEventTimer
+{
+	bool enabled = false;
+	cudaEvent_t start_event = nullptr;
+	cudaEvent_t end_event = nullptr;
+
+	explicit CudaEventTimer(bool should_enable) : enabled(should_enable)
+	{
+		if (!enabled)
+			return;
+		cudaEventCreate(&start_event);
+		cudaEventCreate(&end_event);
+		cudaEventRecord(start_event);
+	}
+
+	~CudaEventTimer()
+	{
+		if (!enabled)
+			return;
+		cudaEventDestroy(start_event);
+		cudaEventDestroy(end_event);
+	}
+
+	float stop()
+	{
+		if (!enabled)
+			return 0.0f;
+
+		cudaEventRecord(end_event);
+		cudaEventSynchronize(end_event);
+		float elapsed_ms = 0.0f;
+		cudaEventElapsedTime(&elapsed_ms, start_event, end_event);
+		return elapsed_ms;
+	}
+};
 
 #endif

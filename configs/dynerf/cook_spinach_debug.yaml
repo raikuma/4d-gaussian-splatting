@@ -9,7 +9,7 @@ exhaust_test: False
 
 ModelParams:
   sh_degree: 3
-  source_path: "d:/data/N3DV/cook_spinach_debug"
+  source_path: "d:/data/N3DV/cook_spinach"
   model_path: "output/N3DV/cook_spinach_debug"
   images: "images"
   resolution: 4
@@ -32,7 +32,7 @@ PipelineParams:
   eval_shfs_4d: True
 
 OptimizationParams:
-  iterations: 300
+  iterations: 500
   position_lr_init: 0.00016
   position_t_lr_init: -1.0
   position_lr_final: 0.0000016

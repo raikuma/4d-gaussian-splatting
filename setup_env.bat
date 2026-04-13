@@ -2,11 +2,11 @@
 setlocal
 
 set "ENV_NAME=4dgs"
-set "VS2019_DEV_CMD=C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat"
+set "VS2019_DEV_CMD=C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat"
 
 call conda create -n %ENV_NAME% python=3.10 pip setuptools=69.5.1 wheel -y
-call conda install -n %ENV_NAME% -y cuda -c nvidia/label/cuda-11.8.0
 call conda activate %ENV_NAME%
+call conda install -y cuda -c nvidia/label/cuda-11.8.0
 
 python -m pip install --upgrade pip
 python -m pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118

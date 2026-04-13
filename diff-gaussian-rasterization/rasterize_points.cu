@@ -63,7 +63,9 @@ RasterizeGaussiansCUDA(
 	const int gaussian_dim,
 	const bool force_sh_3d,
 	const bool prefiltered,
-	const bool debug)
+	const bool debug,
+	const bool profile,
+	const int iteration)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
@@ -100,7 +102,6 @@ RasterizeGaussiansCUDA(
 	  {
 		M = sh.size(1);
       }
-
 	  rendered = CudaRasterizer::Rasterizer::forward(
 	    geomFunc,
 		binningFunc,
@@ -137,7 +138,9 @@ RasterizeGaussiansCUDA(
 		out_depth.contiguous().data<float>(),
 		out_T.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
-		debug);
+		debug,
+		profile,
+		iteration);
   }
   char* geo_ptr = reinterpret_cast<char*>(geomBuffer.contiguous().data_ptr());
   CudaRasterizer::GeometryState geoState = CudaRasterizer::GeometryState::fromChunk(geo_ptr, P);
@@ -183,7 +186,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const int R,
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
-	const bool debug) 
+	const bool debug,
+	const bool profile,
+	const int iteration) 
 {
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
@@ -258,7 +263,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dscales_t.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
 	  dL_drotations_r.contiguous().data<float>(),
-	  debug);
+	  debug,
+	  profile,
+	  iteration);
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D,

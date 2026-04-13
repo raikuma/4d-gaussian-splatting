@@ -14,6 +14,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <cstdlib>
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -29,6 +30,78 @@ namespace cg = cooperative_groups;
 #include "auxiliary.h"
 #include "forward.h"
 #include "backward.h"
+
+namespace {
+
+std::string getRasterizerProfilePath() {
+	const char* profile_dir = std::getenv("FOCUSGS_PROFILE_DIR");
+	if (profile_dir == nullptr || profile_dir[0] == '\0') {
+		return "";
+	}
+	return std::string(profile_dir) + "/rasterizer_profile.csv";
+}
+
+void appendRasterizerProfileRow(
+	const char* phase,
+	int iteration,
+	int points,
+	int image_width,
+	int image_height,
+	int num_rendered,
+	float preprocess_ms,
+	float scan_ms,
+	float copy_rendered_ms,
+	float duplicate_ms,
+	float sort_ms,
+	float zero_ranges_ms,
+	float identify_ranges_ms,
+	float render_ms,
+	float copy_alpha_ms,
+	float backward_render_ms,
+	float backward_preprocess_ms,
+	float total_ms)
+{
+	const std::string profile_path = getRasterizerProfilePath();
+	if (profile_path.empty()) {
+		return;
+	}
+
+	const bool write_header = !std::ifstream(profile_path).good();
+	std::ofstream stream(profile_path, std::ios::app);
+	if (!stream.is_open()) {
+		return;
+	}
+
+	if (write_header) {
+		stream
+			<< "phase,iteration,points,image_width,image_height,num_rendered,"
+			<< "preprocess_ms,scan_ms,copy_rendered_ms,duplicate_ms,sort_ms,zero_ranges_ms,"
+			<< "identify_ranges_ms,render_ms,copy_alpha_ms,backward_render_ms,"
+			<< "backward_preprocess_ms,total_ms\n";
+	}
+
+	stream
+		<< phase << ","
+		<< iteration << ","
+		<< points << ","
+		<< image_width << ","
+		<< image_height << ","
+		<< num_rendered << ","
+		<< preprocess_ms << ","
+		<< scan_ms << ","
+		<< copy_rendered_ms << ","
+		<< duplicate_ms << ","
+		<< sort_ms << ","
+		<< zero_ranges_ms << ","
+		<< identify_ranges_ms << ","
+		<< render_ms << ","
+		<< copy_alpha_ms << ","
+		<< backward_render_ms << ","
+		<< backward_preprocess_ms << ","
+		<< total_ms << "\n";
+}
+
+}  // namespace
 
 // Helper function to find the next-highest bit of the MSB
 // on the CPU.
@@ -229,10 +302,23 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_depth,
 	float* out_T,
 	int* radii,
-	bool debug)
+	bool debug,
+	bool profile,
+	int iteration)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
+	const bool profile_enabled = profile && !getRasterizerProfilePath().empty();
+	float preprocess_ms = 0.0f;
+	float scan_ms = 0.0f;
+	float copy_rendered_ms = 0.0f;
+	float duplicate_ms = 0.0f;
+	float sort_ms = 0.0f;
+	float zero_ranges_ms = 0.0f;
+	float identify_ranges_ms = 0.0f;
+	float render_ms = 0.0f;
+	float copy_alpha_ms = 0.0f;
+	CudaEventTimer total_timer(profile_enabled);
 
 	size_t chunk_size = required<GeometryState>(P);
 	char* chunkptr = geometryBuffer(chunk_size);
@@ -257,47 +343,59 @@ int CudaRasterizer::Rasterizer::forward(
 	}
 
 	// Run preprocessing per-Gaussian (transformation, bounding, conversion of SHs to RGB)
-	CHECK_CUDA(FORWARD::preprocess(
-		P, D, D_t, M,
-		means3D,
-		out_means3D,
-		ts,
-		(glm::vec3*)scales,
-		scales_t,
-		scale_modifier,
-		(glm::vec4*)rotations,
-		(glm::vec4*)rotations_r,
-		opacities,
-		shs,
-		geomState.clamped,
-		cov3D_precomp,
-		colors_precomp,
-		viewmatrix, projmatrix,
-		(glm::vec3*)cam_pos,
-		timestamp,
-		time_duration,
-		rot_4d, gaussian_dim, force_sh_3d,
-		width, height,
-		focal_x, focal_y,
-		tan_fovx, tan_fovy,
-		radii,
-		geomState.means2D,
-		geomState.depths,
-		geomState.cov3D,
-		geomState.rgb,
-		geomState.conic_opacity,
-		tile_grid,
-		geomState.tiles_touched,
-		prefiltered
-	), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(FORWARD::preprocess(
+			P, D, D_t, M,
+			means3D,
+			out_means3D,
+			ts,
+			(glm::vec3*)scales,
+			scales_t,
+			scale_modifier,
+			(glm::vec4*)rotations,
+			(glm::vec4*)rotations_r,
+			opacities,
+			shs,
+			geomState.clamped,
+			cov3D_precomp,
+			colors_precomp,
+			viewmatrix, projmatrix,
+			(glm::vec3*)cam_pos,
+			timestamp,
+			time_duration,
+			rot_4d, gaussian_dim, force_sh_3d,
+			width, height,
+			focal_x, focal_y,
+			tan_fovx, tan_fovy,
+			radii,
+			geomState.means2D,
+			geomState.depths,
+			geomState.cov3D,
+			geomState.rgb,
+			geomState.conic_opacity,
+			tile_grid,
+			geomState.tiles_touched,
+			prefiltered
+		), debug)
+		preprocess_ms = timer.stop();
+	}
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
-	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
+		scan_ms = timer.stop();
+	}
 
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
 	int num_rendered;
-	CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+		copy_rendered_ms = timer.stop();
+	}
 
 	size_t binning_chunk_size = required<BinningState>(num_rendered);
 	char* binning_chunkptr = binningBuffer(binning_chunk_size);
@@ -305,59 +403,105 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// For each instance to be rendered, produce adequate [ tile | depth ] key 
 	// and corresponding dublicated Gaussian indices to be sorted
-	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
-		P,
-		geomState.means2D,
-		geomState.depths,
-		geomState.point_offsets,
-		binningState.point_list_keys_unsorted,
-		binningState.point_list_unsorted,
-		radii,
-		tile_grid)
-	CHECK_CUDA(, debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		duplicateWithKeys << <(P + 255) / 256, 256 >> > (
+			P,
+			geomState.means2D,
+			geomState.depths,
+			geomState.point_offsets,
+			binningState.point_list_keys_unsorted,
+			binningState.point_list_unsorted,
+			radii,
+			tile_grid);
+		CHECK_CUDA(, debug)
+		duplicate_ms = timer.stop();
+	}
 
 	// int bit = getHigherMsb(tile_grid.x * tile_grid.y);
 	int bit = 32;
 
 	// Sort complete list of (duplicated) Gaussian indices by keys
-	CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
-		binningState.list_sorting_space,
-		binningState.sorting_size,
-		binningState.point_list_keys_unsorted, binningState.point_list_keys,
-		binningState.point_list_unsorted, binningState.point_list,
-		num_rendered, 0, 32 + bit), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
+			binningState.list_sorting_space,
+			binningState.sorting_size,
+			binningState.point_list_keys_unsorted, binningState.point_list_keys,
+			binningState.point_list_unsorted, binningState.point_list,
+			num_rendered, 0, 32 + bit), debug)
+		sort_ms = timer.stop();
+	}
 
-	CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
+		zero_ranges_ms = timer.stop();
+	}
 
 	// Identify start and end of per-tile workloads in sorted list
-	if (num_rendered > 0)
+	if (num_rendered > 0) {
+		CudaEventTimer timer(profile_enabled);
 		identifyTileRanges << <(num_rendered + 255) / 256, 256 >> > (
 			num_rendered,
 			binningState.point_list_keys,
 			imgState.ranges);
-	CHECK_CUDA(, debug)
+		CHECK_CUDA(, debug)
+		identify_ranges_ms = timer.stop();
+	}
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 	const float* flow_ptr = flows_precomp;
-	CHECK_CUDA(FORWARD::render(
-		tile_grid, block,
-		imgState.ranges,
-		binningState.point_list,
-		width, height,
-		geomState.means2D,
-		feature_ptr,
-		flow_ptr,
-		geomState.depths,
-		geomState.conic_opacity,
-		imgState.accum_alpha,
-		imgState.n_contrib,
-		background,
-		out_color,
-		out_flow,
-		out_depth), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(FORWARD::render(
+			tile_grid, block,
+			imgState.ranges,
+			binningState.point_list,
+			width, height,
+			geomState.means2D,
+			feature_ptr,
+			flow_ptr,
+			geomState.depths,
+			geomState.conic_opacity,
+			imgState.accum_alpha,
+			imgState.n_contrib,
+			background,
+			out_color,
+			out_flow,
+			out_depth), debug)
+		render_ms = timer.stop();
+	}
 
-	CHECK_CUDA(cudaMemcpy(out_T, imgState.accum_alpha, width * height * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(cudaMemcpy(out_T, imgState.accum_alpha, width * height * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		copy_alpha_ms = timer.stop();
+	}
+
+	if (profile_enabled) {
+		const float total_ms = total_timer.stop();
+		appendRasterizerProfileRow(
+			"forward",
+			iteration,
+			P,
+			width,
+			height,
+			num_rendered,
+			preprocess_ms,
+			scan_ms,
+			copy_rendered_ms,
+			duplicate_ms,
+			sort_ms,
+			zero_ranges_ms,
+			identify_ranges_ms,
+			render_ms,
+			copy_alpha_ms,
+			0.0f,
+			0.0f,
+			total_ms);
+	}
 	return num_rendered;
 }
 
@@ -407,11 +551,17 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dscale_t,
 	float* dL_drot,
 	float* dL_drot_r,
-	bool debug)
+	bool debug,
+	bool profile,
+	int iteration)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
 	ImageState imgState = ImageState::fromChunk(img_buffer, width * height);
+	const bool profile_enabled = profile && !getRasterizerProfilePath().empty();
+	float backward_render_ms = 0.0f;
+	float backward_preprocess_ms = 0.0f;
+	CudaEventTimer total_timer(profile_enabled);
 
 	if (radii == nullptr)
 	{
@@ -429,64 +579,95 @@ void CudaRasterizer::Rasterizer::backward(
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
 	const float* depth_ptr = geomState.depths;
-	CHECK_CUDA(BACKWARD::render(
-		tile_grid,
-		block,
-		imgState.ranges,
-		binningState.point_list,
-		width, height,
-		background,
-		geomState.means2D,
-		geomState.conic_opacity,
-		color_ptr,
-		depth_ptr,
-		flows_2d,
-		imgState.accum_alpha,
-		imgState.n_contrib,
-		dL_dpix,
-		dL_depths,
-		dL_masks,
-		dL_dpix_flow,
-		(float3*)dL_dmean2D,
-		(float4*)dL_dconic,
-		dL_dopacity,
-		dL_dcolor, dL_dflows), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(BACKWARD::render(
+			tile_grid,
+			block,
+			imgState.ranges,
+			binningState.point_list,
+			width, height,
+			background,
+			geomState.means2D,
+			geomState.conic_opacity,
+			color_ptr,
+			depth_ptr,
+			flows_2d,
+			imgState.accum_alpha,
+			imgState.n_contrib,
+			dL_dpix,
+			dL_depths,
+			dL_masks,
+			dL_dpix_flow,
+			(float3*)dL_dmean2D,
+			(float4*)dL_dconic,
+			dL_dopacity,
+			dL_dcolor, dL_dflows), debug)
+		backward_render_ms = timer.stop();
+	}
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
 	// use the one we computed ourselves.
 	const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
-	CHECK_CUDA(BACKWARD::preprocess(P, D, D_t, M,
-		(float3*)out_means3D,
-		radii,
-		shs,
-		ts,
-		opacities,
-		geomState.clamped,
-		geomState.tiles_touched,
-		(glm::vec3*)scales,
-		scales_t,
-		(glm::vec4*)rotations,
-		(glm::vec4*)rotations_r,
-		scale_modifier,
-		cov3D_ptr,
-		viewmatrix,
-		projmatrix,
-		focal_x, focal_y,
-		tan_fovx, tan_fovy,
-		(glm::vec3*)campos,
-		timestamp,
-		time_duration,
-		rot_4d, gaussian_dim, force_sh_3d,
-		(float3*)dL_dmean2D,
-		dL_dconic,
-		(glm::vec3*)dL_dmean3D,
-		dL_dcolor,
-		dL_dcov3D,
-		dL_dsh, dL_dts,
-		(glm::vec3*)dL_dscale,
-		dL_dscale_t,
-		(glm::vec4*)dL_drot,
-		(glm::vec4*)dL_drot_r,
-		dL_dopacity), debug)
+	{
+		CudaEventTimer timer(profile_enabled);
+		CHECK_CUDA(BACKWARD::preprocess(P, D, D_t, M,
+			(float3*)out_means3D,
+			radii,
+			shs,
+			ts,
+			opacities,
+			geomState.clamped,
+			geomState.tiles_touched,
+			(glm::vec3*)scales,
+			scales_t,
+			(glm::vec4*)rotations,
+			(glm::vec4*)rotations_r,
+			scale_modifier,
+			cov3D_ptr,
+			viewmatrix,
+			projmatrix,
+			focal_x, focal_y,
+			tan_fovx, tan_fovy,
+			(glm::vec3*)campos,
+			timestamp,
+			time_duration,
+			rot_4d, gaussian_dim, force_sh_3d,
+			(float3*)dL_dmean2D,
+			dL_dconic,
+			(glm::vec3*)dL_dmean3D,
+			dL_dcolor,
+			dL_dcov3D,
+			dL_dsh, dL_dts,
+			(glm::vec3*)dL_dscale,
+			dL_dscale_t,
+			(glm::vec4*)dL_drot,
+			(glm::vec4*)dL_drot_r,
+			dL_dopacity), debug)
+		backward_preprocess_ms = timer.stop();
+	}
+
+	if (profile_enabled) {
+		const float total_ms = total_timer.stop();
+		appendRasterizerProfileRow(
+			"backward",
+			iteration,
+			P,
+			width,
+			height,
+			R,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			0.0f,
+			backward_render_ms,
+			backward_preprocess_ms,
+			total_ms);
+	}
 }

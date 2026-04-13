@@ -61,7 +61,9 @@ namespace CudaRasterizer
 			float* out_depth,
 			float* out_T,
 			int* radii = nullptr,
-			bool debug = false);
+			bool debug = false,
+			bool profile = false,
+			int iteration = -1);
 
 		static void backward(
 			const int P, int D, int D_t, int M, int R,
@@ -107,7 +109,9 @@ namespace CudaRasterizer
 			float* dL_dscale_t,
 			float* dL_drot,
 			float* dL_drot_r,
-			bool debug);
+			bool debug,
+			bool profile = false,
+			int iteration = -1);
 	};
 };
 
