@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
 
 declare -a JOB_SPECS=(
   "4dgs-batcha configs/dynerf/cook_spinach_remote_baseline_batch_a.yaml"
@@ -17,6 +18,6 @@ mkdir -p /scratch/woongohcho/logs
 for spec in "${JOB_SPECS[@]}"; do
   job_name="${spec%% *}"
   config_path="${spec#* }"
-  job_id="$(sbatch --parsable --job-name="${job_name}" --export=ALL,ENV_NAME=4dgs,CONFIG_PATH="${config_path}" scripts/slurm/run_a6000_train.sbatch)"
+  job_id="$(sbatch --parsable --time="${TIME_LIMIT}" --job-name="${job_name}" --export=ALL,ENV_NAME=4dgs,CONFIG_PATH="${config_path}" scripts/slurm/run_a6000_train.sbatch)"
   echo "${job_name},${job_id},${config_path}"
 done
