@@ -512,12 +512,28 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	float* __restrict__ out_flow,
-	float* __restrict__ out_depth)
+	float* __restrict__ out_depth,
+	const int* __restrict__ active_tile_xy)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
 	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
-	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
+	uint2 pix_min;
+	uint2 range;
+	if (active_tile_xy != nullptr)
+	{
+		const uint32_t active_rank = block.group_index().x;
+		pix_min = {
+			static_cast<unsigned int>(active_tile_xy[2 * active_rank + 0]) * BLOCK_X,
+			static_cast<unsigned int>(active_tile_xy[2 * active_rank + 1]) * BLOCK_Y
+		};
+		range = ranges[active_rank];
+	}
+	else
+	{
+		pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
+		range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
+	}
 	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
@@ -529,7 +545,6 @@ renderCUDA(
 	bool done = !inside;
 
 	// Load start/end range of IDs to process in bit sorted list.
-	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 	int toDo = range.y - range.x;
 
@@ -638,7 +653,8 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* out_flow,
-	float* out_depth)
+	float* out_depth,
+	const int* active_tile_xy)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -654,7 +670,8 @@ void FORWARD::render(
 		bg_color,
 		out_color,
 		out_flow,
-		out_depth);
+		out_depth,
+		active_tile_xy);
 }
 
 void FORWARD::preprocess(int P, int D, int D_t, int M,

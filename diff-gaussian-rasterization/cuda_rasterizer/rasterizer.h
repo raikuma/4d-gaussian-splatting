@@ -55,12 +55,19 @@ namespace CudaRasterizer
 			const float time_duration,
 			const bool rot_4d, const int gaussian_dim, const bool force_sh_3d,
 			const float tan_fovx, float tan_fovy,
+			const int active_tile_count,
+			const int* active_tile_ids,
+			const int* active_tile_xy,
+			const bool* active_tile_mask,
+			const int* active_tile_rank_map,
+			const bool profile,
 			const bool prefiltered,
 			float* out_color,
 			float* out_flow,
 			float* out_depth,
 			float* out_T,
 			int* radii = nullptr,
+			float* profile_out = nullptr,
 			bool debug = false);
 
 		static void backward(
@@ -86,6 +93,12 @@ namespace CudaRasterizer
 			const float time_duration,
 			const bool rot_4d, const int gaussian_dim, const bool force_sh_3d,
 			const float tan_fovx, float tan_fovy,
+			const int active_tile_count,
+			const int* active_tile_ids,
+			const int* active_tile_xy,
+			const bool* active_tile_mask,
+			const int* active_tile_rank_map,
+			const bool profile,
 			const int* radii,
 			char* geom_buffer,
 			char* binning_buffer,
@@ -107,6 +120,7 @@ namespace CudaRasterizer
 			float* dL_dscale_t,
 			float* dL_drot,
 			float* dL_drot_r,
+			float* profile_out,
 			bool debug);
 	};
 };

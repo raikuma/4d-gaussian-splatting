@@ -24,6 +24,13 @@
 #include <fstream>
 #include <string>
 #include <functional>
+#include <array>
+
+namespace {
+constexpr int kForwardProfileSize = 8;
+constexpr int kBackwardProfileSize = 3;
+std::array<float, kBackwardProfileSize> g_last_backward_profile = {0.0f, 0.0f, 0.0f};
+}
 
 std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     auto lambda = [&t](size_t N) {
@@ -33,7 +40,7 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -53,6 +60,11 @@ RasterizeGaussiansCUDA(
 	const float tan_fovy,
     const int image_height,
     const int image_width,
+	const int active_tile_count,
+	const torch::Tensor& active_tile_ids,
+	const torch::Tensor& active_tile_xy,
+	const torch::Tensor& active_tile_mask,
+	const torch::Tensor& active_tile_rank_map,
 	const torch::Tensor& sh,
 	const int degree,
 	const int degree_t, 
@@ -62,6 +74,7 @@ RasterizeGaussiansCUDA(
 	const bool rot_4d,
 	const int gaussian_dim,
 	const bool force_sh_3d,
+	const bool profile,
 	const bool prefiltered,
 	const bool debug)
 {
@@ -82,6 +95,7 @@ RasterizeGaussiansCUDA(
   torch::Tensor out_T = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
   torch::Tensor out_means3D = means3D.clone();
+  torch::Tensor forwardProfile = torch::zeros({kForwardProfileSize}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
   
   torch::Device device(torch::kCUDA);
   torch::TensorOptions options(torch::kByte);
@@ -131,19 +145,26 @@ RasterizeGaussiansCUDA(
 		force_sh_3d,
 		tan_fovx,
 		tan_fovy,
+		active_tile_count,
+		active_tile_ids.contiguous().data_ptr<int>(),
+		active_tile_xy.contiguous().data_ptr<int>(),
+		active_tile_mask.contiguous().data_ptr<bool>(),
+		active_tile_rank_map.contiguous().data_ptr<int>(),
+		profile,
 		prefiltered,
 		out_color.contiguous().data<float>(),
 		out_flow.contiguous().data<float>(), 
 		out_depth.contiguous().data<float>(),
 		out_T.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
+		forwardProfile.data_ptr<float>(),
 		debug);
   }
   char* geo_ptr = reinterpret_cast<char*>(geomBuffer.contiguous().data_ptr());
   CudaRasterizer::GeometryState geoState = CudaRasterizer::GeometryState::fromChunk(geo_ptr, P);
 
   torch::Tensor covs3D_com = torch::from_blob(geoState.cov3D, {P, 6}, float_opts);
-  return std::make_tuple(rendered, out_color, out_flow, out_depth, out_T, radii, geomBuffer, binningBuffer, imgBuffer, covs3D_com, out_means3D);
+  return std::make_tuple(rendered, out_color, out_flow, out_depth, out_T, radii, geomBuffer, binningBuffer, imgBuffer, covs3D_com, out_means3D, forwardProfile);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -166,6 +187,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const torch::Tensor& projmatrix,
 	const float tan_fovx,
 	const float tan_fovy,
+	const int active_tile_count,
+	const torch::Tensor& active_tile_ids,
+	const torch::Tensor& active_tile_xy,
+	const torch::Tensor& active_tile_mask,
+	const torch::Tensor& active_tile_rank_map,
     const torch::Tensor& dL_dout_color,
 	const torch::Tensor& dL_dout_depth,
 	const torch::Tensor& dL_dout_mask,
@@ -179,6 +205,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const bool rot_4d,
 	const int gaussian_dim,
 	const bool force_sh_3d,
+	const bool profile,
 	const torch::Tensor& geomBuffer,
 	const int R,
 	const torch::Tensor& binningBuffer,
@@ -237,6 +264,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
       force_sh_3d,
 	  tan_fovx,
 	  tan_fovy,
+	  active_tile_count,
+	  active_tile_ids.contiguous().data_ptr<int>(),
+	  active_tile_xy.contiguous().data_ptr<int>(),
+	  active_tile_mask.contiguous().data_ptr<bool>(),
+	  active_tile_rank_map.contiguous().data_ptr<int>(),
+	  profile,
 	  radii.contiguous().data<int>(),
 	  reinterpret_cast<char*>(geomBuffer.contiguous().data_ptr()),
 	  reinterpret_cast<char*>(binningBuffer.contiguous().data_ptr()),
@@ -258,11 +291,24 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dscales_t.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
 	  dL_drotations_r.contiguous().data<float>(),
+	  g_last_backward_profile.data(),
 	  debug);
+  }
+  else
+  {
+    g_last_backward_profile = {0.0f, 0.0f, 0.0f};
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D,
         dL_dsh, dL_dflows, dL_dts, dL_dscales, dL_dscales_t, dL_drotations, dL_drotations_r);
+}
+
+torch::Tensor GetLastRasterizeBackwardProfileCUDA()
+{
+  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+  return torch::tensor(
+      {g_last_backward_profile[0], g_last_backward_profile[1], g_last_backward_profile[2]},
+      options);
 }
 
 torch::Tensor markVisible(

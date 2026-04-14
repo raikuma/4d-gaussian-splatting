@@ -12,11 +12,98 @@
 import torch
 from torch.nn import functional as F
 import math
-from .diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from .diff_gaussian_rasterization import (
+    BACKWARD_RASTERIZER_PROFILE_KEYS,
+    FORWARD_RASTERIZER_PROFILE_KEYS,
+    GaussianRasterizationSettings,
+    GaussianRasterizer,
+    get_last_rasterizer_backward_profile,
+)
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh, eval_shfs_4d
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+TILE_BLOCK_X = 16
+TILE_BLOCK_Y = 16
+
+
+def _profile_tensor_to_dict(profile_tensor, keys):
+    if profile_tensor is None:
+        return None
+    if isinstance(profile_tensor, torch.Tensor):
+        values = profile_tensor.detach().cpu().flatten().tolist()
+    else:
+        values = list(profile_tensor)
+    return {key: float(value) for key, value in zip(keys, values)}
+
+
+def get_rasterizer_backward_profile_dict():
+    return _profile_tensor_to_dict(get_last_rasterizer_backward_profile(), BACKWARD_RASTERIZER_PROFILE_KEYS)
+
+
+def _normalize_active_tiles(active_tiles, image_height, image_width, device):
+    tile_w = (int(image_width) + TILE_BLOCK_X - 1) // TILE_BLOCK_X
+    tile_h = (int(image_height) + TILE_BLOCK_Y - 1) // TILE_BLOCK_Y
+    num_tiles = tile_w * tile_h
+
+    empty_ids = torch.empty((0,), dtype=torch.int32, device=device)
+    empty_xy = torch.empty((0, 2), dtype=torch.int32, device=device)
+    empty_mask = torch.empty((0,), dtype=torch.bool, device=device)
+    empty_rank_map = torch.empty((0,), dtype=torch.int32, device=device)
+
+    if active_tiles is None:
+        return -1, empty_ids, empty_xy, empty_mask, empty_rank_map
+
+    active_tile_ids = active_tiles.get("ids")
+    active_tile_xy = active_tiles.get("xy")
+    active_tile_mask = active_tiles.get("mask_dense")
+    active_tile_rank_map = active_tiles.get("rank_map")
+
+    if active_tile_ids is not None:
+        active_tile_ids = active_tile_ids.to(device=device, dtype=torch.int32).contiguous().view(-1)
+    if active_tile_xy is not None:
+        active_tile_xy = active_tile_xy.to(device=device, dtype=torch.int32).contiguous().view(-1, 2)
+    if active_tile_mask is not None:
+        active_tile_mask = active_tile_mask.to(device=device, dtype=torch.bool).contiguous().view(-1)
+    if active_tile_rank_map is not None:
+        active_tile_rank_map = active_tile_rank_map.to(device=device, dtype=torch.int32).contiguous().view(-1)
+
+    if active_tile_ids is None and active_tile_xy is not None:
+        active_tile_ids = active_tile_xy[:, 1] * tile_w + active_tile_xy[:, 0]
+    if active_tile_xy is None and active_tile_ids is not None:
+        active_tile_xy = torch.stack((active_tile_ids.remainder(tile_w), torch.div(active_tile_ids, tile_w, rounding_mode="floor")), dim=1)
+
+    if active_tile_ids is None:
+        active_tile_ids = empty_ids
+    if active_tile_xy is None:
+        active_tile_xy = empty_xy
+
+    if active_tile_mask is None:
+        if active_tile_ids.numel() == 0:
+            active_tile_mask = empty_mask
+        else:
+            # Keep a dense lookup around even when the caller only provides compact indices.
+            active_tile_mask = torch.zeros((num_tiles,), dtype=torch.bool, device=device)
+            active_tile_mask[active_tile_ids.long()] = True
+
+    if active_tile_rank_map is None:
+        if active_tile_ids.numel() == 0:
+            active_tile_rank_map = empty_rank_map
+        else:
+            active_tile_rank_map = torch.full((num_tiles,), -1, dtype=torch.int32, device=device)
+            active_tile_rank_map[active_tile_ids.long()] = torch.arange(active_tile_ids.shape[0], dtype=torch.int32, device=device)
+
+    active_tile_count = int(active_tile_ids.shape[0])
+    if active_tile_xy.shape[0] not in (0, active_tile_count):
+        raise ValueError("active tile xy count must match active tile ids count")
+    if active_tile_mask.numel() not in (0, num_tiles):
+        raise ValueError("active tile mask must be empty or match the dense tile grid size")
+    if active_tile_rank_map.numel() not in (0, num_tiles):
+        raise ValueError("active tile rank map must be empty or match the dense tile grid size")
+
+    return active_tile_count, active_tile_ids, active_tile_xy, active_tile_mask, active_tile_rank_map
+
+
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, active_tiles = None, profile_rasterizer = False):
     """
     Render the scene. 
     
@@ -33,6 +120,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Set up rasterization configuration
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    active_tile_count, active_tile_ids, active_tile_xy, active_tile_mask, active_tile_rank_map = _normalize_active_tiles(
+        active_tiles,
+        viewpoint_camera.image_height,
+        viewpoint_camera.image_width,
+        bg_color.device,
+    )
 
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
@@ -51,6 +144,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rot_4d=pc.rot_4d,
         gaussian_dim=pc.gaussian_dim,
         force_sh_3d=pc.force_sh_3d,
+        active_tile_count=active_tile_count,
+        active_tile_ids=active_tile_ids,
+        active_tile_xy=active_tile_xy,
+        active_tile_mask=active_tile_mask,
+        active_tile_rank_map=active_tile_rank_map,
+        profile=profile_rasterizer,
         prefiltered=False,
         debug=pipe.debug
     )
@@ -147,7 +246,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             flow_2d = flow_2d[mask]
     
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, depth, alpha, flow, covs_com = rasterizer(
+    rendered_image, radii, depth, alpha, flow, covs_com, rasterizer_forward_profile = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -192,4 +291,5 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "alpha": alpha,
             "flow": flow,
             "opacity_t": marginal_t,
-            "sigma": sigma}
+            "sigma": sigma,
+            "rasterizer_forward_profile": _profile_tensor_to_dict(rasterizer_forward_profile, FORWARD_RASTERIZER_PROFILE_KEYS) if profile_rasterizer else None}

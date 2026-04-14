@@ -18,8 +18,10 @@ from torch.utils.cpp_extension import load
 parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "diff-gaussian-rasterization")
 _C = load(
     name='diff_gaussian_rasterization',
-    extra_cflags = ["/FS"],
+    extra_cflags = ["/FS", "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"],
     extra_cuda_cflags=[
+        "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
+        "-allow-unsupported-compiler",
         "-Xcompiler=/FS",
         "-I " + os.path.join(parent_dir, "third_party/glm/"),
         "-g"
@@ -31,6 +33,23 @@ _C = load(
         os.path.join(parent_dir, "rasterize_points.cu"),
         os.path.join(parent_dir, "ext.cpp")],
     verbose=True)
+
+FORWARD_RASTERIZER_PROFILE_KEYS = (
+    "preprocess_ms",
+    "active_filter_ms",
+    "scan_ms",
+    "duplicate_ms",
+    "sort_ms",
+    "ranges_ms",
+    "render_ms",
+    "total_ms",
+)
+
+BACKWARD_RASTERIZER_PROFILE_KEYS = (
+    "render_ms",
+    "preprocess_ms",
+    "total_ms",
+)
 
 def cpu_deep_copy_tuple(input_tuple):
     copied_tensors = [item.cpu().clone() if isinstance(item, torch.Tensor) else item for item in input_tuple]
@@ -66,6 +85,10 @@ def rasterize_gaussians(
         cov3Ds_precomp,
         raster_settings,
     )
+
+
+def get_last_rasterizer_backward_profile():
+    return _C.get_last_rasterize_backward_profile()
 
 class _RasterizeGaussians(torch.autograd.Function):
     @staticmethod
@@ -106,6 +129,11 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.tanfovy,
             raster_settings.image_height,
             raster_settings.image_width,
+            raster_settings.active_tile_count,
+            raster_settings.active_tile_ids,
+            raster_settings.active_tile_xy,
+            raster_settings.active_tile_mask,
+            raster_settings.active_tile_rank_map,
             sh,
             raster_settings.sh_degree,
             raster_settings.sh_degree_t,
@@ -115,6 +143,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.rot_4d,
             raster_settings.gaussian_dim,
             raster_settings.force_sh_3d,
+            raster_settings.profile,
             raster_settings.prefiltered,
             raster_settings.debug,
         )
@@ -123,13 +152,13 @@ class _RasterizeGaussians(torch.autograd.Function):
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, color, flow, depth, T, radii, geomBuffer, binningBuffer, imgBuffer, covs_com, out_means3D = _C.rasterize_gaussians(*args)
+                num_rendered, color, flow, depth, T, radii, geomBuffer, binningBuffer, imgBuffer, covs_com, out_means3D, forward_profile = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, color, flow, depth, T, radii, geomBuffer, binningBuffer, imgBuffer, covs_com, out_means3D = _C.rasterize_gaussians(*args)
+            num_rendered, color, flow, depth, T, radii, geomBuffer, binningBuffer, imgBuffer, covs_com, out_means3D, forward_profile = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
@@ -137,10 +166,10 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.save_for_backward(colors_precomp, means3D, out_means3D, scales, rotations, cov3Ds_precomp, radii, sh, 
                                 flow_2d, opacities, ts, scales_t, rotations_r,
                                 geomBuffer, binningBuffer, imgBuffer)
-        return color, radii, depth, 1-T, flow, covs_com
+        return color, radii, depth, 1-T, flow, covs_com, forward_profile
 
     @staticmethod
-    def backward(ctx, grad_out_color, grad_radii, grad_depth, grad_alpha, grad_flow, grad_covs_com):
+    def backward(ctx, grad_out_color, grad_radii, grad_depth, grad_alpha, grad_flow, grad_covs_com, grad_forward_profile):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
@@ -168,6 +197,11 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.projmatrix, 
                 raster_settings.tanfovx, 
                 raster_settings.tanfovy, 
+                raster_settings.active_tile_count,
+                raster_settings.active_tile_ids,
+                raster_settings.active_tile_xy,
+                raster_settings.active_tile_mask,
+                raster_settings.active_tile_rank_map,
                 grad_out_color, 
                 grad_depth,
                 grad_alpha,
@@ -181,6 +215,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.rot_4d,
                 raster_settings.gaussian_dim,
                 raster_settings.force_sh_3d,
+                raster_settings.profile,
                 geomBuffer,
                 num_rendered,
                 binningBuffer,
@@ -238,6 +273,12 @@ class GaussianRasterizationSettings(NamedTuple):
     rot_4d: bool
     gaussian_dim: int
     force_sh_3d: bool
+    active_tile_count: int
+    active_tile_ids: torch.Tensor
+    active_tile_xy: torch.Tensor
+    active_tile_mask: torch.Tensor
+    active_tile_rank_map: torch.Tensor
+    profile: bool
     prefiltered : bool
     debug : bool
 

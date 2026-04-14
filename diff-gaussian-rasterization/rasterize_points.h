@@ -15,7 +15,7 @@
 #include <tuple>
 #include <string>
 	
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -35,6 +35,11 @@ RasterizeGaussiansCUDA(
 	const float tan_fovy,
     const int image_height,
     const int image_width,
+	const int active_tile_count,
+	const torch::Tensor& active_tile_ids,
+	const torch::Tensor& active_tile_xy,
+	const torch::Tensor& active_tile_mask,
+	const torch::Tensor& active_tile_rank_map,
 	const torch::Tensor& sh,
 	const int degree,
 	const int degree_t,
@@ -44,6 +49,7 @@ RasterizeGaussiansCUDA(
 	const bool rot_4d,
 	const int gaussian_dim,
 	const bool force_sh_3d,
+	const bool profile,
 	const bool prefiltered,
 	const bool debug);
 
@@ -67,6 +73,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const torch::Tensor& projmatrix,
 	const float tan_fovx, 
 	const float tan_fovy,
+	const int active_tile_count,
+	const torch::Tensor& active_tile_ids,
+	const torch::Tensor& active_tile_xy,
+	const torch::Tensor& active_tile_mask,
+	const torch::Tensor& active_tile_rank_map,
     const torch::Tensor& dL_dout_color,
 	const torch::Tensor& dL_dout_depth,
 	const torch::Tensor& dL_dout_mask,
@@ -80,11 +91,14 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const bool rot_4d,
 	const int gaussian_dim,
 	const bool force_sh_3d,
+	const bool profile,
 	const torch::Tensor& geomBuffer,
 	const int R,
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
 	const bool debug);
+
+torch::Tensor GetLastRasterizeBackwardProfileCUDA();
 		
 torch::Tensor markVisible(
 		torch::Tensor& means3D,
