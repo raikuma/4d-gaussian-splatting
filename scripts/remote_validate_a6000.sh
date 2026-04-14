@@ -37,6 +37,6 @@ export TORCH_CUDA_ARCH_LIST=8.6
 mkdir -p /scratch/woongohcho/outputs
 
 python -c \"import torch; print('torch=' + torch.__version__); print('cuda_available=' + str(torch.cuda.is_available())); print('device=' + (torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'))\"
-python -c \"import diff_gaussian_rasterization; print('diff_gaussian_rasterization import ok')\"
+python -c \"from gaussian_renderer import render; print('gaussian_renderer import ok')\"
 python train.py --config \"${CONFIG_PATH}\"
 "

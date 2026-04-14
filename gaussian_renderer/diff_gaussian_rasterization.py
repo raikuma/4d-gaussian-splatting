@@ -14,18 +14,30 @@ import torch.nn as nn
 import torch
 # from . import _C
 import os
+import platform
 from torch.utils.cpp_extension import load
 parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "diff-gaussian-rasterization")
-_C = load(
-    name='diff_gaussian_rasterization',
-    extra_cflags = ["/FS", "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"],
-    extra_cuda_cflags=[
+
+extra_cflags = []
+extra_cuda_cflags = [
+    "-I " + os.path.join(parent_dir, "third_party/glm/"),
+    "-g",
+]
+
+if platform.system() == "Windows":
+    extra_cflags.extend(["/FS", "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"])
+    extra_cuda_cflags = [
         "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
         "-allow-unsupported-compiler",
         "-Xcompiler=/FS",
         "-I " + os.path.join(parent_dir, "third_party/glm/"),
-        "-g"
-    ],
+        "-g",
+    ]
+
+_C = load(
+    name='diff_gaussian_rasterization',
+    extra_cflags=extra_cflags,
+    extra_cuda_cflags=extra_cuda_cflags,
     sources=[
         os.path.join(parent_dir, "cuda_rasterizer/rasterizer_impl.cu"),
         os.path.join(parent_dir, "cuda_rasterizer/forward.cu"),
