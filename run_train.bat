@@ -1,1 +1,0 @@
-python train.py --config configs/dynerf/cook_spinach_debug.yaml
